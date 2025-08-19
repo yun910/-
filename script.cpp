@@ -22,10 +22,7 @@ GNU General Public License for more details.
 #include "window.h" // for a lot of things
 #include "application.h" // for MsgSleep()
 #include "TextIO.h"
-#include <Windows.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
+
 // Globals that are for only this module:
 #define MAX_COMMENT_FLAG_LENGTH 15
 static TCHAR g_CommentFlag[MAX_COMMENT_FLAG_LENGTH + 1] = _T(";"); // Adjust the below for any changes.
@@ -34,18 +31,18 @@ static ExprOpFunc g_ObjGet(BIF_ObjInvoke, IT_GET), g_ObjSet(BIF_ObjInvoke, IT_SE
 static ExprOpFunc g_ObjGetInPlace(BIF_ObjGetInPlace, IT_GET);
 static ExprOpFunc g_ObjNew(BIF_ObjNew, IT_CALL);
 static ExprOpFunc g_ObjPreInc(BIF_ObjIncDec, SYM_PRE_INCREMENT), g_ObjPreDec(BIF_ObjIncDec, SYM_PRE_DECREMENT)
-, g_ObjPostInc(BIF_ObjIncDec, SYM_POST_INCREMENT), g_ObjPostDec(BIF_ObjIncDec, SYM_POST_DECREMENT);
+				, g_ObjPostInc(BIF_ObjIncDec, SYM_POST_INCREMENT), g_ObjPostDec(BIF_ObjIncDec, SYM_POST_DECREMENT);
 ExprOpFunc g_ObjCall(BIF_ObjInvoke, IT_CALL); // Also needed in script_expression.cpp.
 
 
 #define VF(name, fn) { _T(#name), fn }
 #define A_x(name, fn) { _T(#name), fn }
 #define A_(name) A_x(name, BIV_##name)
-											  // IMPORTANT: Both of the following arrays must be kept in alphabetical order
-											  // for binary search to work.  See Script::GetBuiltInVar for further comments.
-											  // g_BIV: All built-in vars not beginning with "A_".  Keeping these separate allows
-											  // the search to be limited to just these few whenever the var name does not begin
-											  // with "A_", as for most user-defined variables.  This helps average-case performance.
+// IMPORTANT: Both of the following arrays must be kept in alphabetical order
+// for binary search to work.  See Script::GetBuiltInVar for further comments.
+// g_BIV: All built-in vars not beginning with "A_".  Keeping these separate allows
+// the search to be limited to just these few whenever the var name does not begin
+// with "A_", as for most user-defined variables.  This helps average-case performance.
 VarEntry g_BIV[] =
 {
 	VF(Clipboard, (BuiltInVarType)VAR_CLIPBOARD),
@@ -210,478 +207,16 @@ VarEntry g_BIV_A[] =
 	A_x(YWeek, BIV_DateTime),
 	A_x(YYYY, BIV_DateTime)
 };
-int CipherToInt(char data[], BYTE  arr[]) {
-	int result = 0;
-	//char CipherC[4];
-	int count = 0;
-	char * ptr = strtok(data, "/");
-	while (ptr != NULL)
-	{
-		char *pos = NULL;
-		result = strtol(ptr, &pos, 10);//10진수로 계산
-		ptr = strtok(NULL, "/");
-		arr[count] = result;
-		count++;
-	}
-	return count;
-}
-
-
-#ifndef _AES_H_
-#define _AES_H_
-#ifdef WINAPI
-// #define WINAPI _stdcall
-typedef unsigned int            UINT;
-typedef unsigned char           BYTE;
-typedef unsigned char*          LPBYTE;
-typedef const unsigned char*    LPCBYTE;
-#define VOID                    void
-#define CONST                   const
-#endif //WINAPI
-
-#define LOCAL(type) static type WINAPI
-
-
-#define CBC     1
-#define ECB     1
-#define AES128  1
-//#define AES192 1
-//#define AES256 1
-
-#if ECB
-VOID WINAPI AES_ECB_Encrypt(LPCBYTE Input, LPCBYTE Key, LPBYTE Output, int Length);
-VOID WINAPI AES_ECB_Decrypt(LPCBYTE Input, LPCBYTE Key, LPBYTE Output, int Length);
-#endif
-
-
-#if CBC
-VOID WINAPI AES_CBC_Encrypt(LPBYTE Output, LPBYTE Input, int Length, LPCBYTE Key, LPCBYTE Iv);
-VOID WINAPI AES_CBC_Decrypt(LPBYTE Output, LPCBYTE Input, int Length, LPCBYTE Key, LPCBYTE Iv);
-#endif
-
-
-#endif //_AES_H_
-
-///////////////////////////////////////////////////////////////////////////////
-/*                        AES Algorithm
-
-ECB-AES128
-----------
-
-plain-text:
-6bc1bee22e409f96e93d7e117393172a
-ae2d8a571e03ac9c9eb76fac45af8e51
-30c81c46a35ce411e5fbc1191a0a52ef
-f69f2445df4f9b17ad2b417be66c3710
-
-key:
-2b7e151628aed2a6abf7158809cf4f3c
-
-resulting cipher
-3ad77bb40d7a3660a89ecaf32466ef97
-f5d3d58503b9699de785895a96fdbaaf
-43b1cd7f598ece23881b00e3ed030688
-7b0c785e27e8ad3f8223207104725dd4
-
-
-NOTE: 원문의 길이는 16바이트 단위 이어야 함
-For AES192/256 the block size is proportionally larger.*/
-///////////////////////////////////////////////////////////////////////////////
-#include <string.h>     //CBC mode, for memset
-
-
-#ifdef AES256
-//#define KEYLEN      32
-#elif defined(AES192)
-//#define KEYLEN      24
-#else
-#define KEYLEN      16  //Key Length in bytes
-#endif
-
-#define Nr          (KEYLEN/8+3)*2      //The number of rounds in AES Cipher.
-#define KEYEXPSIZE  (Nr+1)*16
-#define BLOCKLEN    16
-
-#define SWAP(T,A,B)         {T=A; A=B; B=T;}
-#define ROTATE(T,A,B,C,D)   {T=A; A=B; B=C; C=D; D=T;}
-
-
-
-
-//-----------------------------------------------------------------------------
-//The lookup-tables are marked CONST so they can be placed in read-only storage instead of RAM
-//The numbers below can be computed dynamically trading ROM for RAM -
-//This can be useful in (embedded) bootloader applications, where ROM is often limited.
-//-----------------------------------------------------------------------------
-LOCAL(VOID) GetSBox(LPBYTE TA)
-{
-	static CONST BYTE SBox[256] =
-	{
-		//0     1    2      3     4    5     6     7      8    9     A      B    C     D     E     F
-		0x63, 0x7c, 0x77, 0x7b, 0xf2, 0x6b, 0x6f, 0xc5, 0x30, 0x01, 0x67, 0x2b, 0xfe, 0xd7, 0xab, 0x76,
-		0xca, 0x82, 0xc9, 0x7d, 0xfa, 0x59, 0x47, 0xf0, 0xad, 0xd4, 0xa2, 0xaf, 0x9c, 0xa4, 0x72, 0xc0,
-		0xb7, 0xfd, 0x93, 0x26, 0x36, 0x3f, 0xf7, 0xcc, 0x34, 0xa5, 0xe5, 0xf1, 0x71, 0xd8, 0x31, 0x15,
-		0x04, 0xc7, 0x23, 0xc3, 0x18, 0x96, 0x05, 0x9a, 0x07, 0x12, 0x80, 0xe2, 0xeb, 0x27, 0xb2, 0x75,
-		0x09, 0x83, 0x2c, 0x1a, 0x1b, 0x6e, 0x5a, 0xa0, 0x52, 0x3b, 0xd6, 0xb3, 0x29, 0xe3, 0x2f, 0x84,
-		0x53, 0xd1, 0x00, 0xed, 0x20, 0xfc, 0xb1, 0x5b, 0x6a, 0xcb, 0xbe, 0x39, 0x4a, 0x4c, 0x58, 0xcf,
-		0xd0, 0xef, 0xaa, 0xfb, 0x43, 0x4d, 0x33, 0x85, 0x45, 0xf9, 0x02, 0x7f, 0x50, 0x3c, 0x9f, 0xa8,
-		0x51, 0xa3, 0x40, 0x8f, 0x92, 0x9d, 0x38, 0xf5, 0xbc, 0xb6, 0xda, 0x21, 0x10, 0xff, 0xf3, 0xd2,
-		0xcd, 0x0c, 0x13, 0xec, 0x5f, 0x97, 0x44, 0x17, 0xc4, 0xa7, 0x7e, 0x3d, 0x64, 0x5d, 0x19, 0x73,
-		0x60, 0x81, 0x4f, 0xdc, 0x22, 0x2a, 0x90, 0x88, 0x46, 0xee, 0xb8, 0x14, 0xde, 0x5e, 0x0b, 0xdb,
-		0xe0, 0x32, 0x3a, 0x0a, 0x49, 0x06, 0x24, 0x5c, 0xc2, 0xd3, 0xac, 0x62, 0x91, 0x95, 0xe4, 0x79,
-		0xe7, 0xc8, 0x37, 0x6d, 0x8d, 0xd5, 0x4e, 0xa9, 0x6c, 0x56, 0xf4, 0xea, 0x65, 0x7a, 0xae, 0x08,
-		0xba, 0x78, 0x25, 0x2e, 0x1c, 0xa6, 0xb4, 0xc6, 0xe8, 0xdd, 0x74, 0x1f, 0x4b, 0xbd, 0x8b, 0x8a,
-		0x70, 0x3e, 0xb5, 0x66, 0x48, 0x03, 0xf6, 0x0e, 0x61, 0x35, 0x57, 0xb9, 0x86, 0xc1, 0x1d, 0x9e,
-		0xe1, 0xf8, 0x98, 0x11, 0x69, 0xd9, 0x8e, 0x94, 0x9b, 0x1e, 0x87, 0xe9, 0xce, 0x55, 0x28, 0xdf,
-		0x8c, 0xa1, 0x89, 0x0d, 0xbf, 0xe6, 0x42, 0x68, 0x41, 0x99, 0x2d, 0x0f, 0xb0, 0x54, 0xbb, 0x16
-	};
-
-	TA[0] = SBox[TA[0]];
-	TA[1] = SBox[TA[1]];
-	TA[2] = SBox[TA[2]];
-	TA[3] = SBox[TA[3]];
-}
-
-
-
-
-//This function produces 4*(Nr+1) round keys. The round keys are used in each round to decrypt the states.
-LOCAL(VOID) KeyExpansion(LPBYTE ExpKey, LPCBYTE Key)
-{
-	int I, T;
-	BYTE TA[4];                 //Used for the column/row operations
-	static CONST BYTE Rcon[11] = //The round constant word array, Rcon[I], contains the values given by X to th e power (I-1) being powers of X (X is denoted as {02}) in the field GF(2^8)
-	{
-		0x8d, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36
-	};
-
-	memcpy(ExpKey, Key, KEYLEN);
-
-	//All other round keys are found from the previous round keys.
-	for (I = KEYLEN; I<KEYEXPSIZE; I += 4)
-	{
-		memcpy(TA, ExpKey + I - 4, 4);
-
-		if (I % KEYLEN == 0)
-		{
-			T = TA[0];
-			TA[0] = TA[1];
-			TA[1] = TA[2];
-			TA[2] = TA[3];
-			TA[3] = T;
-
-			GetSBox(TA);
-
-			TA[0] ^= Rcon[I / KEYLEN];
-		}
-#if defined(AES256)
-		if (I % KEYLEN == 16) GetSBox(TA);
-#endif
-		ExpKey[I + 0] = ExpKey[I - KEYLEN + 0] ^ TA[0];
-		ExpKey[I + 1] = ExpKey[I - KEYLEN + 1] ^ TA[1];
-		ExpKey[I + 2] = ExpKey[I - KEYLEN + 2] ^ TA[2];
-		ExpKey[I + 3] = ExpKey[I - KEYLEN + 3] ^ TA[3];
-	}
-}
-
-
-
-//This function adds the round key to state.
-//The round key is added to the state by an XOR function.
-LOCAL(VOID) AddRoundKey(BYTE State[4][4], LPBYTE ExpKey, BYTE Round)
-{
-	int I, J;
-
-	for (I = 0; I<4; I++)
-		for (J = 0; J<4; J++) State[I][J] ^= ExpKey[Round * 4 * 4 + I * 4 + J];
-}
-
-
-
-//The SubBytes Function Substitutes the values in the state matrix with values in an S-box.
-LOCAL(VOID) SubBytes(BYTE State[4][4])
-{
-	int I;
-
-	for (I = 0; I<4; I++) GetSBox(State[I]);
-}
-
-
-
-//The ShiftRows() function shifts the rows in the state to the left.
-//Each row is shifted with different offset.
-//Offset = Row number. So the first row is not shifted.
-LOCAL(VOID) ShiftRows(BYTE State[4][4])
-{
-	BYTE T;
-
-	ROTATE(T, State[0][1], State[1][1], State[2][1], State[3][1]);
-
-	SWAP(T, State[0][2], State[2][2]);
-	SWAP(T, State[1][2], State[3][2]);
-
-	ROTATE(T, State[0][3], State[3][3], State[2][3], State[1][3]);
-}
-
-
-
-LOCAL(VOID) InvShiftRows(BYTE State[4][4])
-{
-	BYTE T;
-
-	ROTATE(T, State[3][1], State[2][1], State[1][1], State[0][1]);
-
-	SWAP(T, State[0][2], State[2][2]);
-	SWAP(T, State[1][2], State[3][2]);
-
-	ROTATE(T, State[0][3], State[1][3], State[2][3], State[3][3]);
-}
-
-
-
-
-LOCAL(int) XTime(int X)
-{
-	return ((X << 1) & 0xFF) ^ (((X >> 7) & 1) * 0x1B);
-}
-
-
-
-//MixColumns function mixes the columns of the state matrix
-LOCAL(VOID) MixColumns(BYTE State[4][4])
-{
-	int I, T1, T2;
-
-	for (I = 0; I<4; I++)
-	{
-		T1 = State[I][0];
-		T2 = State[I][0] ^ State[I][1] ^ State[I][2] ^ State[I][3];
-		State[I][0] ^= XTime(State[I][0] ^ State[I][1]) ^ T2;
-		State[I][1] ^= XTime(State[I][1] ^ State[I][2]) ^ T2;
-		State[I][2] ^= XTime(State[I][2] ^ State[I][3]) ^ T2;
-		State[I][3] ^= XTime(State[I][3] ^ T1) ^ T2;
-	}
-}
-
-
-
-//Used to multiply numbers in the field GF(2^8)
-LOCAL(int) Multiply(int X, int Y)
-{
-	return ((Y >> 0 & 1)*X) ^
-		((Y >> 1 & 1)*XTime(X)) ^
-		((Y >> 2 & 1)*XTime(XTime(X))) ^
-		((Y >> 3 & 1)*XTime(XTime(XTime(X)))) ^
-		((Y >> 4 & 1)*XTime(XTime(XTime(XTime(X)))));
-}
-
-
-//MixColumns function mixes the columns of the state matrix.
-//The method used to multiply may be difficult to understand for the inexperienced.
-//Please use the references to gain more information.
-LOCAL(VOID) InvMixColumns(BYTE State[4][4])
-{
-	int  I, A, B, C, D;
-
-	for (I = 0; I<4; I++)
-	{
-		A = State[I][0];
-		B = State[I][1];
-		C = State[I][2];
-		D = State[I][3];
-
-		State[I][0] = Multiply(A, 0x0E) ^ Multiply(B, 0x0B) ^ Multiply(C, 0x0D) ^ Multiply(D, 0x09);
-		State[I][1] = Multiply(A, 0x09) ^ Multiply(B, 0x0E) ^ Multiply(C, 0x0B) ^ Multiply(D, 0x0D);
-		State[I][2] = Multiply(A, 0x0D) ^ Multiply(B, 0x09) ^ Multiply(C, 0x0E) ^ Multiply(D, 0x0B);
-		State[I][3] = Multiply(A, 0x0B) ^ Multiply(B, 0x0D) ^ Multiply(C, 0x09) ^ Multiply(D, 0x0E);
-	}
-}
-
-
-
-
-//The SubBytes Function Substitutes the values in the state matrix with values in an S-box.
-static VOID InvSubBytes(BYTE State[4][4])
-{
-	int I, J;
-	static CONST BYTE SBoxInvert[256] =
-	{
-		0x52, 0x09, 0x6a, 0xd5, 0x30, 0x36, 0xa5, 0x38, 0xbf, 0x40, 0xa3, 0x9e, 0x81, 0xf3, 0xd7, 0xfb,
-		0x7c, 0xe3, 0x39, 0x82, 0x9b, 0x2f, 0xff, 0x87, 0x34, 0x8e, 0x43, 0x44, 0xc4, 0xde, 0xe9, 0xcb,
-		0x54, 0x7b, 0x94, 0x32, 0xa6, 0xc2, 0x23, 0x3d, 0xee, 0x4c, 0x95, 0x0b, 0x42, 0xfa, 0xc3, 0x4e,
-		0x08, 0x2e, 0xa1, 0x66, 0x28, 0xd9, 0x24, 0xb2, 0x76, 0x5b, 0xa2, 0x49, 0x6d, 0x8b, 0xd1, 0x25,
-		0x72, 0xf8, 0xf6, 0x64, 0x86, 0x68, 0x98, 0x16, 0xd4, 0xa4, 0x5c, 0xcc, 0x5d, 0x65, 0xb6, 0x92,
-		0x6c, 0x70, 0x48, 0x50, 0xfd, 0xed, 0xb9, 0xda, 0x5e, 0x15, 0x46, 0x57, 0xa7, 0x8d, 0x9d, 0x84,
-		0x90, 0xd8, 0xab, 0x00, 0x8c, 0xbc, 0xd3, 0x0a, 0xf7, 0xe4, 0x58, 0x05, 0xb8, 0xb3, 0x45, 0x06,
-		0xd0, 0x2c, 0x1e, 0x8f, 0xca, 0x3f, 0x0f, 0x02, 0xc1, 0xaf, 0xbd, 0x03, 0x01, 0x13, 0x8a, 0x6b,
-		0x3a, 0x91, 0x11, 0x41, 0x4f, 0x67, 0xdc, 0xea, 0x97, 0xf2, 0xcf, 0xce, 0xf0, 0xb4, 0xe6, 0x73,
-		0x96, 0xac, 0x74, 0x22, 0xe7, 0xad, 0x35, 0x85, 0xe2, 0xf9, 0x37, 0xe8, 0x1c, 0x75, 0xdf, 0x6e,
-		0x47, 0xf1, 0x1a, 0x71, 0x1d, 0x29, 0xc5, 0x89, 0x6f, 0xb7, 0x62, 0x0e, 0xaa, 0x18, 0xbe, 0x1b,
-		0xfc, 0x56, 0x3e, 0x4b, 0xc6, 0xd2, 0x79, 0x20, 0x9a, 0xdb, 0xc0, 0xfe, 0x78, 0xcd, 0x5a, 0xf4,
-		0x1f, 0xdd, 0xa8, 0x33, 0x88, 0x07, 0xc7, 0x31, 0xb1, 0x12, 0x10, 0x59, 0x27, 0x80, 0xec, 0x5f,
-		0x60, 0x51, 0x7f, 0xa9, 0x19, 0xb5, 0x4a, 0x0d, 0x2d, 0xe5, 0x7a, 0x9f, 0x93, 0xc9, 0x9c, 0xef,
-		0xa0, 0xe0, 0x3b, 0x4d, 0xae, 0x2a, 0xf5, 0xb0, 0xc8, 0xeb, 0xbb, 0x3c, 0x83, 0x53, 0x99, 0x61,
-		0x17, 0x2b, 0x04, 0x7e, 0xba, 0x77, 0xd6, 0x26, 0xe1, 0x69, 0x14, 0x63, 0x55, 0x21, 0x0c, 0x7d
-	};
-
-	for (I = 0; I<4; I++)
-		for (J = 0; J<4; J++) State[J][I] = SBoxInvert[State[J][I]];
-}
-
-
-
-LOCAL(VOID) Cipher(BYTE State[4][4], LPBYTE ExpKey)
-{
-	int Round;
-
-	//Add the First round key to the state before starting the rounds.
-	AddRoundKey(State, ExpKey, 0);
-
-	//There will be Nr rounds.
-	//The first Nr-1 rounds are identical.
-	//These Nr-1 rounds are executed in the loop below.
-	for (Round = 1; Round<Nr; Round++)
-	{
-		SubBytes(State);
-		ShiftRows(State);
-		MixColumns(State);
-		AddRoundKey(State, ExpKey, Round);
-	}
-
-	//The last round is given below.
-	//The MixColumns function is not here in the last round.
-	SubBytes(State);
-	ShiftRows(State);
-	AddRoundKey(State, ExpKey, Nr);
-}
-
-
-
-LOCAL(VOID) InvCipher(BYTE State[4][4], LPBYTE ExpKey)
-{
-	int Round;
-
-	//Add the First round key to the state before starting the rounds.
-	AddRoundKey(State, ExpKey, Nr);
-
-	//There will be Nr rounds.
-	//The first Nr-1 rounds are identical.
-	//These Nr-1 rounds are executed in the loop below.
-	for (Round = Nr - 1; Round>0; Round--)
-	{
-		InvShiftRows(State);
-		InvSubBytes(State);
-		AddRoundKey(State, ExpKey, Round);
-		InvMixColumns(State);
-	}
-
-	//The last round is given below.
-	//The MixColumns function is not here in the last round.
-	InvShiftRows(State);
-	InvSubBytes(State);
-	AddRoundKey(State, ExpKey, 0);
-}
-
-
-
-//-----------------------------------------------------------------------------
-//          ECB
-//-----------------------------------------------------------------------------
-#if ECB
-VOID WINAPI AES_ECB_Encrypt(LPCBYTE Input, LPCBYTE Key, LPBYTE Output, int Length)
-{
-	BYTE ExpKey[KEYEXPSIZE];
-
-	memcpy(Output, Input, Length);
-	KeyExpansion(ExpKey, Key);
-	Cipher((BYTE(*)[4])Output, ExpKey);
-}
-
-
-VOID WINAPI AES_ECB_Decrypt(LPCBYTE Input, LPCBYTE Key, LPBYTE Output, int Length)
-{
-	BYTE ExpKey[KEYEXPSIZE];
-
-	memcpy(Output, Input, Length);
-	KeyExpansion(ExpKey, Key);
-	InvCipher((BYTE(*)[4])Output, ExpKey);
-}
-#endif
-
-
-
-//-----------------------------------------------------------------------------
-//          CBC
-//-----------------------------------------------------------------------------
-#if CBC
-LOCAL(VOID) XorWithIv(LPBYTE Buff, LPCBYTE Iv)
-{
-	int I;
-	for (I = 0; I<BLOCKLEN; I++) Buff[I] ^= Iv[I];
-}
-
-
-extern VOID WINAPI AES_CBC_Encrypt(LPBYTE Output, LPBYTE Input, int Length, LPCBYTE Key, LPCBYTE Iv)
-{
-	int I, Extra;
-	BYTE ExpKey[KEYEXPSIZE];
-
-	Extra = Length % BLOCKLEN;
-	KeyExpansion(ExpKey, Key);
-
-	for (I = 0; I<Length; I += BLOCKLEN)
-	{
-		XorWithIv(Input, Iv);
-		memcpy(Output, Input, BLOCKLEN);
-		Cipher((BYTE(*)[4])Output, ExpKey);
-		Iv = Output;
-		Input += BLOCKLEN;
-		Output += BLOCKLEN;
-	}
-
-	if (Extra)
-	{
-		memcpy(Output, Input, Extra);
-		Cipher((BYTE(*)[4])Output, ExpKey);
-	}
-}
-
-
-extern VOID WINAPI AES_CBC_Decrypt(LPBYTE Output, LPCBYTE Input, int Length, LPCBYTE Key, LPCBYTE Iv)
-{
-	int I, Extra;
-	BYTE ExpKey[KEYEXPSIZE];
-
-	Extra = Length % BLOCKLEN;
-	KeyExpansion(ExpKey, Key);
-
-	for (I = 0; I<Length; I += BLOCKLEN)
-	{
-		memcpy(Output, Input, BLOCKLEN);
-		InvCipher((BYTE(*)[4])Output, ExpKey);
-		XorWithIv(Output, Iv);
-		Iv = Input;
-		Input += BLOCKLEN;
-		Output += BLOCKLEN;
-	}
-
-	if (Extra)
-	{
-		memcpy(Output, Input, Extra);
-		InvCipher((BYTE(*)[4])Output, ExpKey);
-	}
-}
-#endif //#if CBC
 #undef A_
 #undef VF
 
 
 // See Script::CreateWindows() for details about the following:
-typedef BOOL(WINAPI* AddRemoveClipboardListenerType)(HWND);
+typedef BOOL (WINAPI* AddRemoveClipboardListenerType)(HWND);
 static AddRemoveClipboardListenerType MyRemoveClipboardListener = (AddRemoveClipboardListenerType)
-GetProcAddress(GetModuleHandle(_T("user32")), "RemoveClipboardFormatListener");
+	GetProcAddress(GetModuleHandle(_T("user32")), "RemoveClipboardFormatListener");
 static AddRemoveClipboardListenerType MyAddClipboardListener = (AddRemoveClipboardListenerType)
-GetProcAddress(GetModuleHandle(_T("user32")), "AddClipboardFormatListener");
+	GetProcAddress(GetModuleHandle(_T("user32")), "AddClipboardFormatListener");
 
 // General note about the methods in here:
 // Want to be able to support multiple simultaneous points of execution
@@ -709,7 +244,7 @@ Script::Script()
 	, mFileSpec(_T("")), mFileDir(_T("")), mFileName(_T("")), mOurEXE(_T("")), mOurEXEDir(_T("")), mMainWindowTitle(_T(""))
 	, mIsReadyToExecute(false), mAutoExecSectionIsRunning(false)
 	, mIsRestart(false), mErrorStdOut(false)
-#ifndef AT
+#ifndef AUTOHOTKEYSC
 	, mIncludeLibraryFunctionsThenExit(NULL)
 #endif
 	, mLinesExecutedThisCycle(0), mUninterruptedLineCountMax(1000), mUninterruptibleTime(15)
@@ -724,8 +259,8 @@ Script::Script()
 	ZeroMemory(&mNIC, sizeof(mNIC));  // Constructor initializes this, to be safe.
 	mNIC.hWnd = NULL;  // Set this as an indicator that it tray icon is not installed.
 
-					   // Lastly (after the above have been initialized), anything that can fail:
-	if (!(mTrayMenu = AddMenu(_T("Tray")))) // realistically never happens
+	// Lastly (after the above have been initialized), anything that can fail:
+	if (   !(mTrayMenu = AddMenu(_T("Tray")))   ) // realistically never happens
 	{
 		ScriptError(_T("No tray mem"));
 		ExitApp(EXIT_CRITICAL);
@@ -777,8 +312,8 @@ Script::~Script() // Destructor.
 	AddRemoveHooks(0); // Remove all hooks.
 	if (mNIC.hWnd) // Tray icon is installed.
 		Shell_NotifyIcon(NIM_DELETE, &mNIC); // Remove it.
-											 // Destroy any Progress/SplashImage windows that haven't already been destroyed.  This is necessary
-											 // because sometimes these windows aren't owned by the main window:
+	// Destroy any Progress/SplashImage windows that haven't already been destroyed.  This is necessary
+	// because sometimes these windows aren't owned by the main window:
 	int i;
 	for (i = 0; i < MAX_PROGRESS_WINDOWS; ++i)
 	{
@@ -815,7 +350,7 @@ Script::~Script() // Destructor.
 	// in use by an existing GUI window.  GuiType::Destroy() adheres to this philosophy by detaching
 	// its menu bar prior to destroying its window:
 	while (g_guiCount)
-		GuiType::Destroy(*g_gui[g_guiCount - 1]); // Static method to avoid problems with object destroying itself.
+		GuiType::Destroy(*g_gui[g_guiCount-1]); // Static method to avoid problems with object destroying itself.
 	for (i = 0; i < GuiType::sFontCount; ++i) // Now that GUI windows are gone, delete all GUI fonts.
 		if (GuiType::sFont[i].hfont)
 			DeleteObject(GuiType::sFont[i].hfont);
@@ -884,12 +419,12 @@ ResultType Script::Init(global_struct &g, LPTSTR aScriptFilename, bool aIsRestar
 {
 	mIsRestart = aIsRestart;
 	TCHAR buf[2048]; // Just to make sure we have plenty of room to do things with.
-#ifdef AT
-					 // Fix for v1.0.29: Override the caller's use of __argv[0] by using GetModuleFileName(),
-					 // so that when the script is started from the command line but the user didn't type the
-					 // extension, the extension will be included.  This necessary because otherwise
-					 // #SingleInstance wouldn't be able to detect duplicate versions in every case.
-					 // It also provides more consistency.
+#ifdef AUTOHOTKEYSC
+	// Fix for v1.0.29: Override the caller's use of __argv[0] by using GetModuleFileName(),
+	// so that when the script is started from the command line but the user didn't type the
+	// extension, the extension will be included.  This necessary because otherwise
+	// #SingleInstance wouldn't be able to detect duplicate versions in every case.
+	// It also provides more consistency.
 	GetModuleFileName(NULL, buf, _countof(buf));
 #else
 	TCHAR def_buf[MAX_PATH + 1], exe_buf[MAX_PATH + 20]; // For simplicity, allow at least space for +2 (see below) and "AutoHotkey.chm".
@@ -903,13 +438,13 @@ ResultType Script::Init(global_struct &g, LPTSTR aScriptFilename, bool aIsRestar
 		// MAX_PATH+1 could mean it was truncated.  Any path longer than MAX_PATH would be rare.
 		if (exe_len > MAX_PATH)
 			return FAIL; // Seems the safest option for this unlikely case.
-		if ((suffix = _tcsrchr(exe_buf, '\\')) // Find name part of path.
-			&& (dot = _tcsrchr(suffix, '.'))) // Find extension part of name.
-											  // Even if the extension is somehow zero characters, more than enough space was
-											  // reserved in exe_buf to add "ahk":
-											  //&& dot - exe_buf + 5 < _countof(exe_buf)  ) // Enough space in buffer?
+		if (  (suffix = _tcsrchr(exe_buf, '\\')) // Find name part of path.
+			&& (dot = _tcsrchr(suffix, '.'))  ) // Find extension part of name.
+			// Even if the extension is somehow zero characters, more than enough space was
+			// reserved in exe_buf to add "ahk":
+			//&& dot - exe_buf + 5 < _countof(exe_buf)  ) // Enough space in buffer?
 		{
-			_tcscpy(dot, EXT_AT);
+			_tcscpy(dot, EXT_AUTOHOTKEY);
 		}
 		else // Very unlikely.
 			return FAIL;
@@ -948,18 +483,18 @@ ResultType Script::Init(global_struct &g, LPTSTR aScriptFilename, bool aIsRestar
 		g_NoEnv = true;
 	}
 	else // i.e. don't call the following function for stdin.
-		 // Using the correct case not only makes it look better in title bar & tray tool tip,
-		 // it also helps with the detection of "this script already running" since otherwise
-		 // it might not find the dupe if the same script name is launched with different
-		 // lowercase/uppercase letters:
-		ConvertFilespecToCorrectCase(buf); // This might change the length, e.g. due to expansion of 8.3 filename.
-	if (!(mFileSpec = SimpleHeap::Malloc(buf)))  // The full spec is stored for convenience, and it's relied upon by mIncludeLibraryFunctionsThenExit.
+	// Using the correct case not only makes it look better in title bar & tray tool tip,
+	// it also helps with the detection of "this script already running" since otherwise
+	// it might not find the dupe if the same script name is launched with different
+	// lowercase/uppercase letters:
+	ConvertFilespecToCorrectCase(buf); // This might change the length, e.g. due to expansion of 8.3 filename.
+	if (   !(mFileSpec = SimpleHeap::Malloc(buf))   )  // The full spec is stored for convenience, and it's relied upon by mIncludeLibraryFunctionsThenExit.
 		return FAIL;  // It already displayed the error for us.
 	LPTSTR filename_marker;
 	if (filename_marker = _tcsrchr(buf, '\\'))
 	{
 		*filename_marker = '\0'; // Terminate buf in this position to divide the string.
-		if (!(mFileDir = SimpleHeap::Malloc(buf)))
+		if (   !(mFileDir = SimpleHeap::Malloc(buf))   )
 			return FAIL;  // It already displayed the error for us.
 		++filename_marker;
 	}
@@ -971,31 +506,31 @@ ResultType Script::Init(global_struct &g, LPTSTR aScriptFilename, bool aIsRestar
 		//mFileDir = _T(""); // Already done by the constructor.
 		filename_marker = buf;
 	}
-	if (!(mFileName = SimpleHeap::Malloc(filename_marker)))
+	if (   !(mFileName = SimpleHeap::Malloc(filename_marker))   )
 		return FAIL;  // It already displayed the error for us.
-#ifdef AT
-					  // Omit AutoHotkey from the window title, like AutoIt3 does for its compiled scripts.
-					  // One reason for this is to reduce backlash if evil-doers create viruses and such
-					  // with the program:
+#ifdef AUTOHOTKEYSC
+	// Omit AutoHotkey from the window title, like AutoIt3 does for its compiled scripts.
+	// One reason for this is to reduce backlash if evil-doers create viruses and such
+	// with the program:
 	sntprintf(buf, _countof(buf), _T("%s\\%s"), mFileDir, mFileName);
 #else
 	sntprintf(buf, _countof(buf), _T("%s\\%s - %s"), mFileDir, mFileName, T_AHK_NAME_VERSION);
 #endif
-	if (!(mMainWindowTitle = SimpleHeap::Malloc(buf)))
+	if (   !(mMainWindowTitle = SimpleHeap::Malloc(buf))   )
 		return FAIL;  // It already displayed the error for us.
 
-					  // It may be better to get the module name this way rather than reading it from the registry
-					  // (though it might be more proper to parse it out of the command line args or something),
-					  // in case the user has moved it to a folder other than the install folder, hasn't installed it,
-					  // or has renamed the EXE file itself.  Also, enclose the full filespec of the module in double
-					  // quotes since that's how callers usually want it because ActionExec() currently needs it that way:
+	// It may be better to get the module name this way rather than reading it from the registry
+	// (though it might be more proper to parse it out of the command line args or something),
+	// in case the user has moved it to a folder other than the install folder, hasn't installed it,
+	// or has renamed the EXE file itself.  Also, enclose the full filespec of the module in double
+	// quotes since that's how callers usually want it because ActionExec() currently needs it that way:
 	*buf = '"';
 	if (GetModuleFileName(NULL, buf + 1, _countof(buf) - 2)) // -2 to leave room for the enclosing double quotes.
 	{
 		size_t buf_length = _tcslen(buf);
 		buf[buf_length++] = '"';
 		buf[buf_length] = '\0';
-		if (!(mOurEXE = SimpleHeap::Malloc(buf)))
+		if (   !(mOurEXE = SimpleHeap::Malloc(buf))   )
 			return FAIL;  // It already displayed the error for us.
 		else
 		{
@@ -1003,35 +538,35 @@ ResultType Script::Init(global_struct &g, LPTSTR aScriptFilename, bool aIsRestar
 			if (!last_backslash) // probably can't happen due to the nature of GetModuleFileName().
 				mOurEXEDir = _T("");
 			*last_backslash = '\0';
-			if (!(mOurEXEDir = SimpleHeap::Malloc(buf + 1))) // +1 to omit the leading double-quote.
+			if (   !(mOurEXEDir = SimpleHeap::Malloc(buf + 1))   ) // +1 to omit the leading double-quote.
 				return FAIL;  // It already displayed the error for us.
 		}
 	}
 	return OK;
 }
 
-
+	
 
 ResultType Script::CreateWindows()
 // Returns OK or FAIL.
 {
 	if (!mMainWindowTitle || !*mMainWindowTitle) return FAIL;  // Init() must be called before this function.
-															   // Register a window class for the main window:
-	WNDCLASSEX wc = { 0 };
+	// Register a window class for the main window:
+	WNDCLASSEX wc = {0};
 	wc.cbSize = sizeof(wc);
 	wc.lpszClassName = WINDOW_CLASS_MAIN;
 	wc.hInstance = g_hInstance;
 	wc.lpfnWndProc = MainWindowProc;
 	// The following are left at the default of NULL/0 set higher above:
-	wc.style = 0;  // CS_HREDRAW | CS_VREDRAW
-	wc.cbClsExtra = 0;
-	wc.cbWndExtra = 0;
+	//wc.style = 0;  // CS_HREDRAW | CS_VREDRAW
+	//wc.cbClsExtra = 0;
+	//wc.cbWndExtra = 0;
 	// Load the main icon in the two sizes needed throughout the program:
 	g_IconLarge = ExtractIconFromExecutable(NULL, -IDI_MAIN, 0, 0);
 	g_IconSmall = ExtractIconFromExecutable(NULL, -IDI_MAIN, GetSystemMetrics(SM_CXSMICON), 0);
 	wc.hIcon = g_IconLarge;
 	wc.hIconSm = g_IconSmall;
-	wc.hCursor = LoadCursor((HINSTANCE)NULL, IDC_ARROW);
+	wc.hCursor = LoadCursor((HINSTANCE) NULL, IDC_ARROW);
 	wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);  // Needed for ProgressBar. Old: (HBRUSH)GetStockObject(WHITE_BRUSH);
 	wc.lpszMenuName = MAKEINTRESOURCE(IDR_MENU_MAIN); // NULL; // "MainMenu";
 	if (!RegisterClassEx(&wc))
@@ -1055,18 +590,18 @@ ResultType Script::CreateWindows()
 	bool do_minimize = !fore_win || (GetClassName(fore_win, class_name, _countof(class_name))
 		&& !_tcsicmp(class_name, _T("Shell_TrayWnd"))); // Shell_TrayWnd is the taskbar's class on Win98/XP and probably the others too.
 
-														// Note: the title below must be constructed the same was as is done by our
-														// WinMain() (so that we can detect whether this script is already running)
-														// which is why it's standardized in g_script.mMainWindowTitle.
-														// Create the main window.  Prevent momentary disruption of Start Menu, which
-														// some users understandably don't like, by omitting the taskbar button temporarily.
-														// This is done because testing shows that minimizing the window further below, even
-														// though the window is hidden, would otherwise briefly show the taskbar button (or
-														// at least redraw the taskbar).  Sometimes this isn't noticeable, but other times
-														// (such as when the system is under heavy load) a user reported that it is quite
-														// noticeable. WS_EX_TOOLWINDOW is used instead of WS_EX_NOACTIVATE because
-														// WS_EX_NOACTIVATE is available only on 2000/XP.
-	if (!(g_hWnd = CreateWindowEx(do_minimize ? WS_EX_TOOLWINDOW : 0
+	// Note: the title below must be constructed the same was as is done by our
+	// WinMain() (so that we can detect whether this script is already running)
+	// which is why it's standardized in g_script.mMainWindowTitle.
+	// Create the main window.  Prevent momentary disruption of Start Menu, which
+	// some users understandably don't like, by omitting the taskbar button temporarily.
+	// This is done because testing shows that minimizing the window further below, even
+	// though the window is hidden, would otherwise briefly show the taskbar button (or
+	// at least redraw the taskbar).  Sometimes this isn't noticeable, but other times
+	// (such as when the system is under heavy load) a user reported that it is quite
+	// noticeable. WS_EX_TOOLWINDOW is used instead of WS_EX_NOACTIVATE because
+	// WS_EX_NOACTIVATE is available only on 2000/XP.
+	if (   !(g_hWnd = CreateWindowEx(do_minimize ? WS_EX_TOOLWINDOW : 0
 		, WINDOW_CLASS_MAIN
 		, mMainWindowTitle
 		, WS_OVERLAPPEDWINDOW // Style.  Alt: WS_POPUP or maybe 0.
@@ -1077,23 +612,23 @@ ResultType Script::CreateWindows()
 		, NULL // parent window
 		, NULL // Identifies a menu, or specifies a child-window identifier depending on the window style
 		, g_hInstance // passed into WinMain
-		, NULL))) // lpParam
+		, NULL))   ) // lpParam
 	{
 		MsgBox(_T("CreateWindow")); // Short msg since so rare.
 		return FAIL;
 	}
-#ifdef ATHK
+#ifdef AUTOHOTKEYSC
 	HMENU menu = GetMenu(g_hWnd);
 	// Disable the Edit menu item, since it does nothing for a compiled script:
 	EnableMenuItem(menu, ID_FILE_EDITSCRIPT, MF_DISABLED | MF_GRAYED);
 	EnableOrDisableViewMenuItems(menu, MF_DISABLED | MF_GRAYED); // Fix for v1.0.47.06: No point in checking g_AllowMainWindow because the script hasn't starting running yet, so it will always be false.
-																 // But leave the ID_VIEW_REFRESH menu item enabled because if the script contains a
-																 // command such as ListLines in it, Refresh can be validly used.
+	// But leave the ID_VIEW_REFRESH menu item enabled because if the script contains a
+	// command such as ListLines in it, Refresh can be validly used.
 #endif
 
-	if (!(g_hWndEdit = CreateWindow(_T("edit"), NULL, WS_CHILD | WS_VISIBLE | WS_BORDER
+	if (    !(g_hWndEdit = CreateWindow(_T("edit"), NULL, WS_CHILD | WS_VISIBLE | WS_BORDER
 		| ES_LEFT | ES_MULTILINE | ES_READONLY | WS_VSCROLL // | WS_HSCROLL (saves space)
-		, 0, 0, 0, 0, g_hWnd, (HMENU)1, g_hInstance, NULL)))
+		, 0, 0, 0, 0, g_hWnd, (HMENU)1, g_hInstance, NULL))   )
 	{
 		MsgBox(_T("CreateWindow")); // Short msg since so rare.
 		return FAIL;
@@ -1101,13 +636,13 @@ ResultType Script::CreateWindows()
 	// FONTS: The font used by default, at least on XP, is GetStockObject(SYSTEM_FONT).
 	// It seems preferable to smaller fonts such DEFAULT_GUI_FONT(DEFAULT_GUI_FONT).
 	// For more info on pre-loaded fonts (not too many choices), see MSDN's GetStockObject().
-	if (g_os.IsWinNT())
+	if(g_os.IsWinNT())
 	{
 		// Use a more appealing font on NT versions of Windows.
 
 		// Windows NT to Windows XP -> Lucida Console
 		HDC hdc = GetDC(g_hWndEdit);
-		if (!g_os.IsWinVistaOrLater())
+		if(!g_os.IsWinVistaOrLater())
 			g_hFontEdit = CreateFont(FONT_POINT(hdc, 10), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 				, DEFAULT_QUALITY, DEFAULT_PITCH | FF_DONTCARE, _T("Lucida Console"));
 		else // Windows Vista and later -> Consolas
@@ -1128,7 +663,7 @@ ResultType Script::CreateWindows()
 	// function operate in a special mode. Therefore, it seems best to get that first call out
 	// of the way to avoid the possibility that the first-call behavior will cause problems with
 	// our normal use of ShowWindow() below and other places.  Also, decided to ignore nCmdShow,
-	// to avoid any momentary visual effects on startup.
+    // to avoid any momentary visual effects on startup.
 	// Update: It's done a second time because the main window might now be visible if the process
 	// that launched ours specified that.  It seems best to override the requested state because
 	// some calling processes might specify "maximize" or "shownormal" as generic launch method.
@@ -1237,11 +772,11 @@ void Script::CreateTrayIcon()
 // crashed, since the memory used by the tray icon was probably destroyed along with it.
 {
 	ZeroMemory(&mNIC, sizeof(mNIC));  // To be safe.
-									  // Using NOTIFYICONDATA_V2_SIZE vs. sizeof(NOTIFYICONDATA) improves compatibility with Win9x maybe.
-									  // MSDN: "Using [NOTIFYICONDATA_V2_SIZE] for cbSize will allow your application to use NOTIFYICONDATA
-									  // with earlier Shell32.dll versions, although without the version 6.0 enhancements."
-									  // Update: Using V2 gives an compile error so trying V1.  Update: Trying sizeof(NOTIFYICONDATA)
-									  // for compatibility with VC++ 6.x.  This is also what AutoIt3 uses:
+	// Using NOTIFYICONDATA_V2_SIZE vs. sizeof(NOTIFYICONDATA) improves compatibility with Win9x maybe.
+	// MSDN: "Using [NOTIFYICONDATA_V2_SIZE] for cbSize will allow your application to use NOTIFYICONDATA
+	// with earlier Shell32.dll versions, although without the version 6.0 enhancements."
+	// Update: Using V2 gives an compile error so trying V1.  Update: Trying sizeof(NOTIFYICONDATA)
+	// for compatibility with VC++ 6.x.  This is also what AutoIt3 uses:
 	mNIC.cbSize = sizeof(NOTIFYICONDATA);  // NOTIFYICONDATA_V1_SIZE
 	mNIC.hWnd = g_hWnd;
 	mNIC.uID = AHK_NOTIFYICON; // This is also used for the ID, see TRANSLATE_AHK_MSG for details.
@@ -1249,11 +784,11 @@ void Script::CreateTrayIcon()
 	mNIC.uCallbackMessage = AHK_NOTIFYICON;
 	mNIC.hIcon = mCustomIconSmall ? mCustomIconSmall : g_IconSmall;
 	UPDATE_TIP_FIELD
-		// If we were called due to an Explorer crash, I don't think it's necessary to call
-		// Shell_NotifyIcon() to remove the old tray icon because it was likely destroyed
-		// along with Explorer.  So just add it unconditionally:
-		if (!Shell_NotifyIcon(NIM_ADD, &mNIC))
-			mNIC.hWnd = NULL;  // Set this as an indicator that tray icon is not installed.
+	// If we were called due to an Explorer crash, I don't think it's necessary to call
+	// Shell_NotifyIcon() to remove the old tray icon because it was likely destroyed
+	// along with Explorer.  So just add it unconditionally:
+	if (!Shell_NotifyIcon(NIM_ADD, &mNIC))
+		mNIC.hWnd = NULL;  // Set this as an indicator that tray icon is not installed.
 }
 
 
@@ -1294,36 +829,36 @@ ResultType Script::AutoExecSection()
 {
 	// Now that g_MaxThreadsTotal has been permanently set by the processing of script directives like
 	// #MaxThreads, an appropriately sized array can be allocated:
-	if (!(g_array = (global_struct *)malloc((g_MaxThreadsTotal + TOTAL_ADDITIONAL_THREADS) * sizeof(global_struct))))
+	if (   !(g_array = (global_struct *)malloc((g_MaxThreadsTotal+TOTAL_ADDITIONAL_THREADS) * sizeof(global_struct)))   )
 		return FAIL; // Due to rarity, just abort. It wouldn't be safe to run ExitApp() due to possibility of an OnExit routine.
 	CopyMemory(g_array, g, sizeof(global_struct)); // Copy the temporary/startup "g" into array[0] to preserve historical behaviors that may rely on the idle thread starting with that "g".
 	g = g_array; // Must be done after above.
 
-				 // v1.0.48: Due to switching from SET_UNINTERRUPTIBLE_TIMER to IsInterruptible():
-				 // In spite of the comments in IsInterruptible(), periodically have a timer call IsInterruptible() due to
-				 // the following scenario:
-				 // - Interrupt timeout is 60 seconds (or 60 milliseconds for that matter).
-				 // - For some reason IsInterrupt() isn't called for 24+ hours even though there is a current/active thread.
-				 // - RefreshInterruptibility() fires at 23 hours and marks the thread interruptible.
-				 // - Sometime after that, one of the following happens:
-				 //      Computer is suspended/hibernated and stays that way for 50+ days.
-				 //      IsInterrupt() is never called (except by RefreshInterruptibility()) for 50+ days.
-				 //      (above is currently unlikely because MSG_FILTER_MAX calls IsInterruptible())
-				 // In either case, RefreshInterruptibility() has prevented the uninterruptibility duration from being
-				 // wrongly extended by up to 100% of g_script.mUninterruptibleTime.  This isn't a big deal if
-				 // g_script.mUninterruptibleTime is low (like it almost always is); but if it's fairly large, say an hour,
-				 // this can prevent an unwanted extension of up to 1 hour.
-				 // Although any call frequency less than 49.7 days should work, currently calling once per 23 hours
-				 // in case any older operating systems have a SetTimer() limit of less than 0x7FFFFFFF (and also to make
-				 // it less likely that a long suspend/hibernate would cause the above issue).  The following was
-				 // actually tested on Windows XP and a message does indeed arrive 23 hours after the script starts.
-	SetTimer(g_hWnd, TIMER_ID_REFRESH_INTERRUPTIBILITY, 23 * 60 * 60 * 1000, RefreshInterruptibility); // 3rd param must not exceed 0x7FFFFFFF (2147483647; 24.8 days).
+	// v1.0.48: Due to switching from SET_UNINTERRUPTIBLE_TIMER to IsInterruptible():
+	// In spite of the comments in IsInterruptible(), periodically have a timer call IsInterruptible() due to
+	// the following scenario:
+	// - Interrupt timeout is 60 seconds (or 60 milliseconds for that matter).
+	// - For some reason IsInterrupt() isn't called for 24+ hours even though there is a current/active thread.
+	// - RefreshInterruptibility() fires at 23 hours and marks the thread interruptible.
+	// - Sometime after that, one of the following happens:
+	//      Computer is suspended/hibernated and stays that way for 50+ days.
+	//      IsInterrupt() is never called (except by RefreshInterruptibility()) for 50+ days.
+	//      (above is currently unlikely because MSG_FILTER_MAX calls IsInterruptible())
+	// In either case, RefreshInterruptibility() has prevented the uninterruptibility duration from being
+	// wrongly extended by up to 100% of g_script.mUninterruptibleTime.  This isn't a big deal if
+	// g_script.mUninterruptibleTime is low (like it almost always is); but if it's fairly large, say an hour,
+	// this can prevent an unwanted extension of up to 1 hour.
+	// Although any call frequency less than 49.7 days should work, currently calling once per 23 hours
+	// in case any older operating systems have a SetTimer() limit of less than 0x7FFFFFFF (and also to make
+	// it less likely that a long suspend/hibernate would cause the above issue).  The following was
+	// actually tested on Windows XP and a message does indeed arrive 23 hours after the script starts.
+	SetTimer(g_hWnd, TIMER_ID_REFRESH_INTERRUPTIBILITY, 23*60*60*1000, RefreshInterruptibility); // 3rd param must not exceed 0x7FFFFFFF (2147483647; 24.8 days).
 
 	ResultType ExecUntil_result;
 
 	if (!mFirstLine) // In case it's ever possible to be empty.
 		ExecUntil_result = OK;
-	// And continue on to do normal exit routine so that the right ExitCode is returned by the program.
+		// And continue on to do normal exit routine so that the right ExitCode is returned by the program.
 	else
 	{
 		// Choose a timeout that's a reasonable compromise between the following competing priorities:
@@ -1354,13 +889,13 @@ ResultType Script::AutoExecSection()
 
 		++g_nThreads;
 		DEBUGGER_STACK_PUSH(_T("Auto-execute"))
-			ExecUntil_result = mFirstLine->ExecUntil(UNTIL_RETURN); // Might never return (e.g. infinite loop or ExitApp).
+		ExecUntil_result = mFirstLine->ExecUntil(UNTIL_RETURN); // Might never return (e.g. infinite loop or ExitApp).
 		DEBUGGER_STACK_POP()
-			--g_nThreads;
+		--g_nThreads;
 		// Our caller will take care of setting g_default properly.
 
 		KILL_AUTOEXEC_TIMER // See also: AutoExecSectionTimeout().
-			mAutoExecSectionIsRunning = false;
+		mAutoExecSectionIsRunning = false;
 	}
 	// REMEMBER: The ExecUntil() call above will never return if the AutoExec section never finishes
 	// (e.g. infinite loop) or it uses Exit/ExitApp.
@@ -1382,26 +917,26 @@ ResultType Script::AutoExecSection()
 	// affecting the settings for other subroutines:
 	global_clear_state(*g);  // Start with a "clean slate" in both g_default and g (in case things like InitNewThread() check some of the values in g prior to launching a new thread).
 
-							 // Always want g_default.AllowInterruption==true so that InitNewThread()  doesn't have to
-							 // set it except when Critical or "Thread Interrupt" require it.  If the auto-execute section ended
-							 // without anyone needing to call IsInterruptible() on it, AllowInterruption could be false
-							 // even when Critical is off.
-							 // Even if the still-running AutoExec section has turned on Critical, the assignment below is still okay
-							 // because InitNewThread() adjusts AllowInterruption based on the value of ThreadIsCritical.
-							 // See similar code in AutoExecSectionTimeout().
+	// Always want g_default.AllowInterruption==true so that InitNewThread()  doesn't have to
+	// set it except when Critical or "Thread Interrupt" require it.  If the auto-execute section ended
+	// without anyone needing to call IsInterruptible() on it, AllowInterruption could be false
+	// even when Critical is off.
+	// Even if the still-running AutoExec section has turned on Critical, the assignment below is still okay
+	// because InitNewThread() adjusts AllowInterruption based on the value of ThreadIsCritical.
+	// See similar code in AutoExecSectionTimeout().
 	g->AllowThreadToBeInterrupted = true; // Mostly for the g_default line below. See comments above.
 	CopyMemory(&g_default, g, sizeof(global_struct)); // g->IsPaused has been set to false higher above in case it's ever possible that it's true as a result of AutoExecSection().
-													  // After this point, the values in g_default should never be changed.
+	// After this point, the values in g_default should never be changed.
 	global_maximize_interruptibility(*g); // See below.
-										  // Now that any changes made by the AutoExec section have been saved to g_default (including
-										  // the commands Critical and Thread), ensure that the very first g-item is always interruptible.
-										  // This avoids having to treat the first g-item as special in various places.
+	// Now that any changes made by the AutoExec section have been saved to g_default (including
+	// the commands Critical and Thread), ensure that the very first g-item is always interruptible.
+	// This avoids having to treat the first g-item as special in various places.
 
-										  // It seems best to set ErrorLevel to NONE after the auto-execute part of the script is done.
-										  // However, it isn't set to NONE right before launching each new thread (e.g. hotkey subroutine)
-										  // because it's more flexible that way (i.e. the user may want one hotkey subroutine to use the value
-										  // of ErrorLevel set by another).  This reset was also done by LoadFromFile(), but it is done again
-										  // here in case the auto-execute section changed it:
+	// It seems best to set ErrorLevel to NONE after the auto-execute part of the script is done.
+	// However, it isn't set to NONE right before launching each new thread (e.g. hotkey subroutine)
+	// because it's more flexible that way (i.e. the user may want one hotkey subroutine to use the value
+	// of ErrorLevel set by another).  This reset was also done by LoadFromFile(), but it is done again
+	// here in case the auto-execute section changed it:
 	g_ErrorLevel->Assign(ERRORLEVEL_NONE);
 
 	// BEFORE DOING THE BELOW, "g" and "g_default" should be set up properly in case there's an OnExit
@@ -1419,7 +954,7 @@ ResultType Script::AutoExecSection()
 
 ResultType Script::Edit()
 {
-#ifdef AT
+#ifdef AUTOHOTKEYSC
 	return OK; // Do nothing.
 #else
 	// This is here in case a compiled script ever uses the Edit command.  Since the "Edit This
@@ -1432,7 +967,7 @@ ResultType Script::Edit()
 	{
 		TCHAR class_name[32];
 		GetClassName(hwnd, class_name, _countof(class_name));
-		if (!_tcscmp(class_name, _T("#32770")) || !_tcsnicmp(class_name, _T("PLORENCE"), 10)) // MessageBox(), InputBox(), FileSelectFile(), or GUI/script-owned window.
+		if (!_tcscmp(class_name, _T("#32770")) || !_tcsnicmp(class_name, _T("AutoHotkey"), 10)) // MessageBox(), InputBox(), FileSelectFile(), or GUI/script-owned window.
 			hwnd = NULL;  // Exclude it from consideration.
 	}
 	if (hwnd)  // File appears to already be open for editing, so use the current window.
@@ -1449,8 +984,8 @@ ResultType Script::Edit()
 			// v1.0.40.06: Try to open .ini files first with their associated editor rather than trying the
 			// "edit" verb on them:
 			LPTSTR file_ext;
-			if (!(file_ext = _tcsrchr(mFileName, '.')) || _tcsicmp(file_ext, _T(".ini"))
-				|| !ActionExec(_T("open"), buf, mFileDir, false)) // Relies on short-circuit boolean order.
+			if (   !(file_ext = _tcsrchr(mFileName, '.')) || _tcsicmp(file_ext, _T(".ini"))
+				|| !ActionExec(_T("open"), buf, mFileDir, false)   ) // Relies on short-circuit boolean order.
 			{
 				// Even though notepad properly handles filenames with spaces in them under WinXP,
 				// even without double quotes around them, it seems safer and more correct to always
@@ -1470,7 +1005,7 @@ ResultType Script::Reload(bool aDisplayErrors)
 {
 	// The new instance we're about to start will tell our process to stop, or it will display
 	// a syntax error or some other error, in which case our process will still be running:
-#ifdef AT
+#ifdef AUTOHOTKEYSC
 	// This is here in case a compiled script ever uses the Reload command.  Since the "Reload This
 	// Script" menu item is not available for compiled scripts, it can't be called from there.
 	return g_script.ActionExec(mOurEXE, _T("/restart"), g_WorkingDirOrig, aDisplayErrors);
@@ -1515,9 +1050,9 @@ ResultType Script::ExitApp(ExitReasons aExitReason, LPTSTR aBuf, int aExitCode)
 			sExitCode = aExitCode; // Override the previous exit code.
 		sExitAppShouldTerminate = true; // Signal our other instance that ExitApp was called.
 		return EARLY_EXIT; // Exit the thread (our other instance will call TerminateApp).
-						   // MUST NOT create a new thread when sOnExitIsRunning because g_array allows only one
-						   // extra thread for ExitApp() (which allows it to run even when MAX_THREADS_EMERGENCY
-						   // has been reached).  See TOTAL_ADDITIONAL_THREADS for details.
+		// MUST NOT create a new thread when sOnExitIsRunning because g_array allows only one
+		// extra thread for ExitApp() (which allows it to run even when MAX_THREADS_EMERGENCY
+		// has been reached).  See TOTAL_ADDITIONAL_THREADS for details.
 	}
 	sExitCode = aExitCode;
 
@@ -1536,38 +1071,38 @@ ResultType Script::ExitApp(ExitReasons aExitReason, LPTSTR aBuf, int aExitCode)
 	tcslcpy(ErrorLevel_saved, g_ErrorLevel->Contents(), _countof(ErrorLevel_saved)); // Save caller's errorlevel.
 	InitNewThread(0, true, true, ACT_INVALID); // Uninterruptibility is handled below. Since this special thread should always run, no checking of g_MaxThreadsTotal is done before calling this.
 
-											   // Turn on uninterruptibility to forbid any hotkeys, timers, or user defined menu items
-											   // to interrupt.  This is mainly done for peace-of-mind (since possible interactions due to
-											   // interruptions have not been studied) and the fact that this most users would not want this
-											   // subroutine to be interruptible (it usually runs quickly anyway).  Another reason to make
-											   // it non-interruptible is that some OnExit subroutines might destruct things used by the
-											   // script's hotkeys/timers/menu items, and activating these items during the deconstruction
-											   // would not be safe.  Finally, if a logoff or shutdown is occurring, it seems best to prevent
-											   // timed subroutines from running -- which might take too much time and prevent the exit from
-											   // occurring in a timely fashion.  An option can be added via the FutureUse param to make it
-											   // interruptible if there is ever a demand for that.
-											   // UPDATE: g_AllowInterruption is now used instead of g->AllowThreadToBeInterrupted for two reasons:
-											   // 1) It avoids the need to do "int mUninterruptedLineCountMax_prev = g_script.mUninterruptedLineCountMax;"
-											   //    (Disable this item so that ExecUntil() won't automatically make our new thread uninterruptible
-											   //    after it has executed a certain number of lines).
-											   // 2) Mostly obsolete: If the thread we're interrupting is uninterruptible, the uninterruptible timer
-											   //    might be currently pending.  When it fires, it would make the OnExit subroutine interruptible
-											   //    rather than the underlying subroutine.  The above fixes the first part of that problem.
-											   //    The 2nd part is fixed by reinstating the timer when the uninterruptible thread is resumed.
-											   //    This special handling is only necessary here -- not in other places where new threads are
-											   //    created -- because OnExit is the only type of thread that can interrupt an uninterruptible
-											   //    thread.
+	// Turn on uninterruptibility to forbid any hotkeys, timers, or user defined menu items
+	// to interrupt.  This is mainly done for peace-of-mind (since possible interactions due to
+	// interruptions have not been studied) and the fact that this most users would not want this
+	// subroutine to be interruptible (it usually runs quickly anyway).  Another reason to make
+	// it non-interruptible is that some OnExit subroutines might destruct things used by the
+	// script's hotkeys/timers/menu items, and activating these items during the deconstruction
+	// would not be safe.  Finally, if a logoff or shutdown is occurring, it seems best to prevent
+	// timed subroutines from running -- which might take too much time and prevent the exit from
+	// occurring in a timely fashion.  An option can be added via the FutureUse param to make it
+	// interruptible if there is ever a demand for that.
+	// UPDATE: g_AllowInterruption is now used instead of g->AllowThreadToBeInterrupted for two reasons:
+	// 1) It avoids the need to do "int mUninterruptedLineCountMax_prev = g_script.mUninterruptedLineCountMax;"
+	//    (Disable this item so that ExecUntil() won't automatically make our new thread uninterruptible
+	//    after it has executed a certain number of lines).
+	// 2) Mostly obsolete: If the thread we're interrupting is uninterruptible, the uninterruptible timer
+	//    might be currently pending.  When it fires, it would make the OnExit subroutine interruptible
+	//    rather than the underlying subroutine.  The above fixes the first part of that problem.
+	//    The 2nd part is fixed by reinstating the timer when the uninterruptible thread is resumed.
+	//    This special handling is only necessary here -- not in other places where new threads are
+	//    created -- because OnExit is the only type of thread that can interrupt an uninterruptible
+	//    thread.
 	BOOL g_AllowInterruption_prev = g_AllowInterruption;  // Save current setting.
 	g_AllowInterruption = FALSE; // Mark the thread just created above as permanently uninterruptible (i.e. until it finishes and is destroyed).
 
 	sOnExitIsRunning = true;
 	DEBUGGER_STACK_PUSH(_T("OnExit"))
 
-		bool terminate_afterward = true; // Set default - see below for comments.
-
-										 // When a legacy OnExit label is present, the default behaviour is to exit the script only if
-										 // it calls ExitApp.  Therefore to make OnExit() useful in a script which uses legacy OnExit,
-										 // we need to prevent ExitApp from actually terminating the app:
+	bool terminate_afterward = true; // Set default - see below for comments.
+	
+	// When a legacy OnExit label is present, the default behaviour is to exit the script only if
+	// it calls ExitApp.  Therefore to make OnExit() useful in a script which uses legacy OnExit,
+	// we need to prevent ExitApp from actually terminating the app:
 	sExitAppShouldTerminate = false;
 	// If the subroutine encounters a failure condition such as a runtime error, exit afterward.
 	// Otherwise, there will be no way to exit the script if the subroutine fails on each attempt.
@@ -1586,9 +1121,9 @@ ResultType Script::ExitApp(ExitReasons aExitReason, LPTSTR aBuf, int aExitCode)
 		if (mOnExit.Call(param, _countof(param), mOnExitLabel ? 0 : 1) == CONDITION_TRUE)
 			terminate_afterward = false; // A handler returned true to prevent exit.
 	}
-
+	
 	DEBUGGER_STACK_POP()
-		sOnExitIsRunning = false;  // In case the user wanted the thread to end normally (see above).
+	sOnExitIsRunning = false;  // In case the user wanted the thread to end normally (see above).
 
 	if (terminate_afterward || caller_requested_termination)
 		TerminateApp(aExitReason, aExitCode);
@@ -1663,7 +1198,7 @@ UINT Script::LoadFromFile()
 	mIsReadyToExecute = mAutoExecSectionIsRunning = false;
 	if (!mFileSpec || !*mFileSpec) return LOADING_FAILED;
 
-#ifndef AT  // When not in stand-alone mode, read an external script file.
+#ifndef AUTOHOTKEYSC  // When not in stand-alone mode, read an external script file.
 	DWORD attr = g_RunStdIn ? 0 : GetFileAttributes(mFileSpec); // v1.1.17: Don't check if reading script from stdin.
 	if (attr == MAXDWORD) // File does not exist or lacking the authorization to get its attributes.
 	{
@@ -1678,7 +1213,7 @@ UINT Script::LoadFromFile()
 	// This must be created before loading the script because it's relied upon when creating
 	// hotkeys to provide an alternative to having a NULL label. It will be given a non-NULL
 	// mJumpToLine further down.
-	if (!(mPlaceholderLabel = new Label(_T("")))) // Not added to linked list since it's never looked up.
+	if (   !(mPlaceholderLabel = new Label(_T("")))   ) // Not added to linked list since it's never looked up.
 		return LOADING_FAILED;
 
 	// L4: Changed this next section to support lines added for #if (expression).
@@ -1686,16 +1221,16 @@ UINT Script::LoadFromFile()
 	// function library auto-inclusions to be processed correctly.
 
 	// Load the main script file.  This will also load any files it includes with #Include.
-	if (LoadIncludedFile(g_RunStdIn ? _T("*") : mFileSpec, false, false) != OK
+	if (   LoadIncludedFile(g_RunStdIn ? _T("*") : mFileSpec, false, false) != OK
 		|| !AddLine(ACT_EXIT)) // Add an Exit to ensure lib auto-includes aren't auto-executed, for backward compatibility.
 		return LOADING_FAILED;
 
 	if (!PreparseExpressions(mFirstLine))
 		return LOADING_FAILED; // Error was already displayed by the above call.
-							   // ABOVE: In v1.0.47, the above may have auto-included additional files from the userlib/stdlib.
-							   // That's why the above is done prior to adding the EXIT lines and other things below.
+	// ABOVE: In v1.0.47, the above may have auto-included additional files from the userlib/stdlib.
+	// That's why the above is done prior to adding the EXIT lines and other things below.
 
-							   // Preparse static initializers and #if expressions.
+	// Preparse static initializers and #if expressions.
 	PreparseStaticLines(mFirstLine);
 	if (mFirstStaticLine)
 	{
@@ -1704,7 +1239,7 @@ UINT Script::LoadFromFile()
 		mFirstLine->mPrevLine = mLastStaticLine;
 		mFirstLine = mFirstStaticLine;
 	}
-
+	
 	// Scan for undeclared local variables which are named the same as a global variable.
 	// This loop has two purposes (but it's all handled in PreprocessLocalVars()):
 	//
@@ -1733,7 +1268,7 @@ UINT Script::LoadFromFile()
 		mUnresolvedClasses = NULL;
 	}
 
-#ifndef AT
+#ifndef AUTOHOTKEYSC
 	if (mIncludeLibraryFunctionsThenExit)
 	{
 		delete mIncludeLibraryFunctionsThenExit;
@@ -1748,36 +1283,36 @@ UINT Script::LoadFromFile()
 	// "#Include NewDir" should not entirely eliminate this flexibility).
 	SetCurrentDirectory(g_WorkingDirOrig); // g_WorkingDirOrig previously set by WinMain().
 
-										   // Rather than do this, which seems kinda nasty if ever someday support same-line
-										   // else actions such as "else return", just add two EXITs to the end of every script.
-										   // That way, if the first EXIT added accidentally "corrects" an actionless ELSE
-										   // or IF, the second one will serve as the anchoring end-point (mRelatedLine) for that
-										   // IF or ELSE.  In other words, since we never want mRelatedLine to be NULL, this should
-										   // make absolutely sure of that:
-										   //if (mLastLine->mActionType == ACT_ELSE ||
-										   //	ACT_IS_IF(mLastLine->mActionType)
-										   //	...
-										   // Second ACT_EXIT: even if the last line of the script is already "exit", always add
-										   // another one in case the script ends in a label.  That way, every label will have
-										   // a non-NULL target, which simplifies other aspects of script execution.
-										   // Making sure that all scripts end with an EXIT ensures that if the script
-										   // file ends with ELSEless IF or an ELSE, that IF's or ELSE's mRelatedLine
-										   // will be non-NULL, which further simplifies script execution.
-										   // Not done since it's number doesn't much matter: ++mCombinedLineNumber;
+	// Rather than do this, which seems kinda nasty if ever someday support same-line
+	// else actions such as "else return", just add two EXITs to the end of every script.
+	// That way, if the first EXIT added accidentally "corrects" an actionless ELSE
+	// or IF, the second one will serve as the anchoring end-point (mRelatedLine) for that
+	// IF or ELSE.  In other words, since we never want mRelatedLine to be NULL, this should
+	// make absolutely sure of that:
+	//if (mLastLine->mActionType == ACT_ELSE ||
+	//	ACT_IS_IF(mLastLine->mActionType)
+	//	...
+	// Second ACT_EXIT: even if the last line of the script is already "exit", always add
+	// another one in case the script ends in a label.  That way, every label will have
+	// a non-NULL target, which simplifies other aspects of script execution.
+	// Making sure that all scripts end with an EXIT ensures that if the script
+	// file ends with ELSEless IF or an ELSE, that IF's or ELSE's mRelatedLine
+	// will be non-NULL, which further simplifies script execution.
+	// Not done since it's number doesn't much matter: ++mCombinedLineNumber;
 	++mCombinedLineNumber;  // So that the EXITs will both show up in ListLines as the line # after the last physical one in the script.
 	if (!(AddLine(ACT_EXIT) && AddLine(ACT_EXIT))) // Second exit guaranties non-NULL mRelatedLine(s).
 		return LOADING_FAILED;
 	mPlaceholderLabel->mJumpToLine = mLastLine; // To follow the rule "all labels should have a non-NULL line before the script starts running".
 
-	if (!PreparseBlocks(mFirstLine)
-		|| !PreparseCommands(mFirstLine))
+	if (   !PreparseBlocks(mFirstLine)
+		|| !PreparseCommands(mFirstLine)   )
 		return LOADING_FAILED; // Error was already displayed by the above calls.
 
-							   // Use FindOrAdd, not Add, because the user may already have added it simply by
-							   // referring to it in the script:
-	if (!(g_ErrorLevel = FindOrAddVar(_T("ErrorLevel"))))
+	// Use FindOrAdd, not Add, because the user may already have added it simply by
+	// referring to it in the script:
+	if (   !(g_ErrorLevel = FindOrAddVar(_T("ErrorLevel")))   )
 		return LOADING_FAILED; // Error.  Above already displayed it for us.
-							   // Initialize the var state to zero right before running anything in the script:
+	// Initialize the var state to zero right before running anything in the script:
 	g_ErrorLevel->Assign(ERRORLEVEL_NONE);
 
 	// Initialize the random number generator:
@@ -1793,8 +1328,8 @@ UINT Script::LoadFromFile()
 	RESEED_RANDOM_GENERATOR;
 
 	return TRUE; // Must be non-zero.
-				 // OBSOLETE: mLineCount was always non-zero at this point since above did AddLine().
-				 //return mLineCount; // The count of runnable lines that were loaded, which might be zero.
+	// OBSOLETE: mLineCount was always non-zero at this point since above did AddLine().
+	//return mLineCount; // The count of runnable lines that were loaded, which might be zero.
 }
 
 
@@ -1825,10 +1360,10 @@ bool IsFunction(LPTSTR aBuf, bool *aPendingFunctionHasBrace = NULL)
 	// opening parenthesis to occur after a legitimate/quoted colon or double-colon in its parameters.
 	// v1.0.40.04: Added condition "action_end != aBuf" to allow a hotkey or remap or hotkey such as
 	// such as "(::" to work even if it ends in a close-parenthesis such as "(::)" or "(::MsgBox )"
-	if (!(action_end && *action_end == '(' && action_end != aBuf
+	if (   !(action_end && *action_end == '(' && action_end != aBuf
 		&& tcslicmp(aBuf, _T("IF"), action_end - aBuf)
 		&& tcslicmp(aBuf, _T("WHILE"), action_end - aBuf)) // v1.0.48.04: Recognize While() as loop rather than a function because many programmers are in the habit of writing while() and if().
-		|| action_end[1] == ':') // v1.0.44.07: This prevents "$(::fn_call()" from being seen as a function-call vs. hotkey-with-call.  For simplicity and due to rarity, omit_leading_whitespace() isn't called; i.e. assumes that the colon immediate follows the '('.
+		|| action_end[1] == ':'   ) // v1.0.44.07: This prevents "$(::fn_call()" from being seen as a function-call vs. hotkey-with-call.  For simplicity and due to rarity, omit_leading_whitespace() isn't called; i.e. assumes that the colon immediate follows the '('.
 		return false;
 	LPTSTR aBuf_last_char = action_end + _tcslen(action_end) - 1; // Above has already ensured that action_end is "(...".
 	if (aPendingFunctionHasBrace) // Caller specified that an optional open-brace may be present at the end of aBuf.
@@ -1840,9 +1375,9 @@ bool IsFunction(LPTSTR aBuf, bool *aPendingFunctionHasBrace = NULL)
 		}
 	}
 	return *aBuf_last_char == ')'; // This last check avoids detecting a label such as "Label(x):" as a function.
-								   // Also, it seems best never to allow if(...) to be a function call, even if it's blank inside such as if().
-								   // In addition, it seems best not to allow if(...) to ever be a function definition since such a function
-								   // could never be called as ACT_EXPRESSION since it would be seen as an IF-stmt instead.
+	// Also, it seems best never to allow if(...) to be a function call, even if it's blank inside such as if().
+	// In addition, it seems best not to allow if(...) to ever be a function definition since such a function
+	// could never be called as ACT_EXPRESSION since it would be seen as an IF-stmt instead.
 }
 
 
@@ -1867,8 +1402,7 @@ inline LPTSTR IsClassDefinition(LPTSTR aBuf, bool &aHasOTB)
 }
 
 
-char RESdata[5000000] = { 0 };
-BYTE arr[5000000] = { 0 };
+
 ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclude, bool aIgnoreLoadFailure)
 // Returns OK or FAIL.
 // Below: Use double-colon as delimiter to set these apart from normal labels.
@@ -1881,7 +1415,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 {
 	if (!aFileSpec || !*aFileSpec) return FAIL;
 
-#ifndef AT
+#ifndef AUTOHOTKEYSC
 	if (Line::sSourceFileCount >= Line::sMaxSourceFiles)
 	{
 		if (Line::sSourceFileCount >= ABSOLUTE_MAX_SOURCE_FILES)
@@ -1889,7 +1423,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 		int new_max;
 		if (Line::sMaxSourceFiles)
 		{
-			new_max = 2 * Line::sMaxSourceFiles;
+			new_max = 2*Line::sMaxSourceFiles;
 			if (new_max > ABSOLUTE_MAX_SOURCE_FILES)
 				new_max = ABSOLUTE_MAX_SOURCE_FILES;
 		}
@@ -1915,7 +1449,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 		// Since this is the first source file, it must be the main script file.  Just point it to the
 		// location of the filespec already dynamically allocated:
 		Line::sSourceFile[source_file_index] = mFileSpec;
-#ifndef AT  // The "else" part below should never execute for compiled scripts since they never include anything (other than the main/combined script).
+#ifndef AUTOHOTKEYSC  // The "else" part below should never execute for compiled scripts since they never include anything (other than the main/combined script).
 	else
 	{
 		// Get the full path in case aFileSpec has a relative path.  This is done so that duplicates
@@ -1934,8 +1468,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 #endif
 
 	// <buf> should be no larger than LINE_SIZE because some later functions rely upon that:
-	TCHAR msg_text[MAX_PATH + 256], buf1[LINE_SIZE], buf2[LINE_SIZE], suffix[16], pending_buf[LINE_SIZE];
-	*pending_buf = '\0';
+	TCHAR msg_text[MAX_PATH + 256], buf1[LINE_SIZE], buf2[LINE_SIZE], suffix[16], pending_buf[LINE_SIZE] = _T("");
 	LPTSTR buf = buf1, next_buf = buf2; // Oscillate between bufs to improve performance (avoids memcpy from buf2 to buf1).
 	size_t buf_length, next_buf_length, suffix_length;
 	bool pending_buf_has_brace;
@@ -1945,7 +1478,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 		Pending_Property
 	} pending_buf_type;
 
-#ifndef AT
+#ifndef AUTOHOTKEYSC
 	TextFile tfile, *fp = &tfile;
 	if (!tfile.Open(aFileSpec, DEFAULT_READ_FLAGS, g_DefaultScriptCodepage))
 	{
@@ -1970,46 +1503,26 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 #ifdef _DEBUG
 	if (hRes = FindResource(NULL, _T("AHK"), RT_RCDATA))
 #else
-	if (hRes = FindResource(NULL, _T("AS"), RT_RCDATA))
+	if (hRes = FindResource(NULL, _T(">AUTOHOTKEY SCRIPT<"), RT_RCDATA))
 #endif
-	{
-	}
-	else if (hRes = FindResource(NULL, _T("AWI"), RT_RCDATA))
-	{
-	}
-
-	if (!(hRes
-		&& (textbuf.mLength = SizeofResource(NULL, hRes))
-		&& (hResData = LoadResource(NULL, hRes))
-		&& (textbuf.mBuffer = LockResource(hResData))))
+	{}
+	else if (hRes = FindResource(NULL, _T(">AHK WITH ICON<"), RT_RCDATA))
+	{}
+	
+	if ( !( hRes 
+			&& (textbuf.mLength = SizeofResource(NULL, hRes))
+			&& (hResData = LoadResource(NULL, hRes))
+			&& (textbuf.mBuffer = LockResource(hResData)) ) )
 	{
 		MsgBox(_T("Could not extract script from EXE."), 0, aFileSpec);
 		return FAIL;
-	}
-	else {
-		//#pragma comment(linker, "/entry:wWinMainCRTStartup /subsystem:console")  
-		printf("%s", textbuf.mBuffer);
-		char * data = (char *)textbuf.mBuffer;
-		memcpy(RESdata, textbuf.mBuffer, strlen(data) + 1);
-		BYTE * mBuffer = new BYTE[5000000];
-		//printf("%s", data);
-		//printf("%s", RESdata);
-		BYTE Key[] = { 0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c };
-		memset(mBuffer, 0, sizeof(mBuffer));
-		int i = CipherToInt(RESdata, arr);
-		for (int j = 0; j < i; j++) {
-			//printf("%d \n", arr[j]);
-		}
-		AES_ECB_Decrypt((LPCBYTE)arr, Key, mBuffer, i);
-		//	printf("%s", mBuffer);
-		textbuf.mBuffer = mBuffer;
 	}
 
 	TextMem tmem, *fp = &tmem;
 	// NOTE: Ahk2Exe strips off the UTF-8 BOM.
 	tmem.Open(textbuf, TextStream::READ | TextStream::EOL_CRLF | TextStream::EOL_ORPHAN_CR, CP_UTF8);
 #endif
-	textbuf.mBuffer = NULL;
+
 	++Line::sSourceFileCount;
 
 	// File is now open, read lines from it.
@@ -2031,8 +1544,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 	// For the line continuation mechanism:
 	bool do_ltrim, do_rtrim, literal_escapes, literal_derefs, literal_delimiters
 		, has_continuation_section, is_continuation_line;
-#define CONTINUATION_SECTION_WITHOUT_COMMENTS 1 // MUST BE 1 because it's the default set by anything that's boolean-true.
-#define CONTINUATION_SECTION_WITH_COMMENTS    2 // Zero means "not in a continuation section".
+	#define CONTINUATION_SECTION_WITHOUT_COMMENTS 1 // MUST BE 1 because it's the default set by anything that's boolean-true.
+	#define CONTINUATION_SECTION_WITH_COMMENTS    2 // Zero means "not in a continuation section".
 	int in_continuation_section;
 
 	LPTSTR next_option, option_end;
@@ -2041,15 +1554,15 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 	two_char_string[2] = '\0';  //
 	int continuation_line_count;
 
-#define MAX_FUNC_VAR_GLOBALS 2000
+	#define MAX_FUNC_VAR_GLOBALS 2000
 	Var *func_global_var[MAX_FUNC_VAR_GLOBALS];
 
 	// Init both for main file and any included files loaded by this function:
 	mCurrFileIndex = source_file_index;  // source_file_index is kept on the stack due to recursion (from #include).
 
-#ifdef AT
-										 // -1 (MAX_UINT in this case) to compensate for the fact that there is a comment containing
-										 // the version number added to the top of each compiled script:
+#ifdef AUTOHOTKEYSC
+	// -1 (MAX_UINT in this case) to compensate for the fact that there is a comment containing
+	// the version number added to the top of each compiled script:
 	LineNumberType phys_line_number = -1;
 #else
 	LineNumberType phys_line_number = 0;
@@ -2077,11 +1590,11 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 		// indirectly by calling something that changed it:
 		mCurrLine = NULL;  // To signify that we're in transition, trying to load a new one.
 
-						   // v1.0.44.13: An additional call to IsDirective() is now made up here so that #CommentFlag affects
-						   // the line beneath it the same way as other lines (#EscapeChar et. al. didn't have this bug).
-						   // It's best not to process ALL directives up here because then they would no longer support a
-						   // continuation section beneath them (and possibly other drawbacks because it was never thoroughly
-						   // tested).
+		// v1.0.44.13: An additional call to IsDirective() is now made up here so that #CommentFlag affects
+		// the line beneath it the same way as other lines (#EscapeChar et. al. didn't have this bug).
+		// It's best not to process ALL directives up here because then they would no longer support a
+		// continuation section beneath them (and possibly other drawbacks because it was never thoroughly
+		// tested).
 		if (!_tcsnicmp(buf, _T("#CommentFlag"), 12)) // Have IsDirective() process this now (it will also process it again later, which is harmless).
 			if (IsDirective(buf) == FAIL) // IsDirective() already displayed the error.
 				return FAIL;
@@ -2120,8 +1633,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			{
 				if (next_buf_length == -1) // Compare directly to -1 since length is unsigned.
 					break; // By design, it's not an error.  This allows "/*" to be used to comment out the bottommost portion of the script without needing a matching "*/".
-						   // Otherwise, continue reading lines so that they can be merged with the line above them
-						   // if they qualify as continuation lines.
+				// Otherwise, continue reading lines so that they can be merged with the line above them
+				// if they qualify as continuation lines.
 				continue;
 			}
 
@@ -2132,8 +1645,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				// with '(' but that ends with ':' should be treated as a label because labels such as
 				// "(label):" are far more common than something obscure like a continuation section whose
 				// join character is colon, namely "(Join:".
-				if (!(in_continuation_section = (next_buf_length != -1 && *next_buf == '(' // Compare directly to -1 since length is unsigned.
-					&& next_buf[1] != ':' && next_buf[next_buf_length - 1] != ':'))) // Relies on short-circuit boolean order.
+				if (   !(in_continuation_section = (next_buf_length != -1 && *next_buf == '(' // Compare directly to -1 since length is unsigned.
+					&& next_buf[1] != ':' && next_buf[next_buf_length - 1] != ':'))   ) // Relies on short-circuit boolean order.
 				{
 					if (next_buf_length == -1)  // Compare directly to -1 since length is unsigned.
 						break;
@@ -2155,10 +1668,10 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 						break;
 
 					is_continuation_line = false; // Set default.
-					switch (ctoupper(*next_buf)) // Above has ensured *next_buf != '\0' (toupper might have problems with '\0').
+					switch(ctoupper(*next_buf)) // Above has ensured *next_buf != '\0' (toupper might have problems with '\0').
 					{
 					case 'A': // "AND".
-							  // See comments in the default section further below.
+						// See comments in the default section further below.
 						if (!_tcsnicmp(next_buf, _T("and"), 3) && IS_SPACE_OR_TAB_OR_NBSP(next_buf[3])) // Relies on short-circuit boolean order.
 						{
 							cp = omit_leading_whitespace(next_buf + 3);
@@ -2174,7 +1687,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 						}
 						break;
 					case 'O': // "OR".
-							  // See comments in the default section further below.
+						// See comments in the default section further below.
 						if (ctoupper(next_buf[1]) == 'R' && IS_SPACE_OR_TAB_OR_NBSP(next_buf[2])) // Relies on short-circuit boolean order.
 						{
 							cp = omit_leading_whitespace(next_buf + 2);
@@ -2205,13 +1718,13 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 						//    x := y 
 						//    -z ? a:=1 : func() 
 						if ((*next_buf == ':' || *next_buf == '+' || *next_buf == '-') && next_buf[1] == *next_buf // See above.
-																												   // L31: '.' and '?' no longer require spaces; '.' without space is member-access (object) operator.
-																												   //|| (*next_buf == '.' || *next_buf == '?') && !IS_SPACE_OR_TAB_OR_NBSP(next_buf[1]) // The "." and "?" operators require a space or tab after them to be legitimate.  For ".", this is done in case period is ever a legal character in var names, such as struct support.  For "?", it's done for backward compatibility since variable names can contain question marks (though "?" by itself is not considered a variable in v1.0.46).
-																												   //&& next_buf[1] != '=' // But allow ".=" (and "?=" too for code simplicity), since ".=" is the concat-assign operator.
+							// L31: '.' and '?' no longer require spaces; '.' without space is member-access (object) operator.
+							//|| (*next_buf == '.' || *next_buf == '?') && !IS_SPACE_OR_TAB_OR_NBSP(next_buf[1]) // The "." and "?" operators require a space or tab after them to be legitimate.  For ".", this is done in case period is ever a legal character in var names, such as struct support.  For "?", it's done for backward compatibility since variable names can contain question marks (though "?" by itself is not considered a variable in v1.0.46).
+								//&& next_buf[1] != '=' // But allow ".=" (and "?=" too for code simplicity), since ".=" is the concat-assign operator.
 							|| !_tcschr(CONTINUATION_LINE_SYMBOLS, *next_buf)) // Line doesn't start with a continuation char.
 							break; // Leave is_continuation_line set to its default of false.
-								   // Some of the above checks must be done before the next ones.
-						if (!(hotkey_flag = _tcsstr(next_buf, HOTKEY_FLAG))) // Without any "::", it can't be a hotkey or hotstring.
+						// Some of the above checks must be done before the next ones.
+						if (   !(hotkey_flag = _tcsstr(next_buf, HOTKEY_FLAG))   ) // Without any "::", it can't be a hotkey or hotstring.
 						{
 							is_continuation_line = true; // Override the default set earlier.
 							break;
@@ -2229,8 +1742,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 								}
 							if (hotstring_options_all_valid && *cp == ':') // It's almost certainly a hotstring.
 								break; // So don't treat it as a continuation line.
-									   //else it's not a hotstring but it might still be a hotkey such as ": & x::".
-									   // So continue checking below.
+							//else it's not a hotstring but it might still be a hotkey such as ": & x::".
+							// So continue checking below.
 						}
 						// Since above didn't "break", this line isn't a hotstring but it is probably a hotkey
 						// because above already discovered that it contains "::" somewhere. So try to find out
@@ -2244,8 +1757,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 							// this comma.  Normal (single-colon) labels can't contain commas, so only hotkey
 							// labels are sources of ambiguity.  In addition, normal labels and hotstrings have
 							// already been checked for, higher above.
-							if (_tcsncmp(cp, HOTKEY_FLAG, HOTKEY_FLAG_LENGTH) // It's not a hotkey such as ",::action".
-								&& _tcsncmp(cp - 1, COMPOSITE_DELIMITER, COMPOSITE_DELIMITER_LENGTH)) // ...and it's not a hotkey such as ", & y::action".
+							if (   _tcsncmp(cp, HOTKEY_FLAG, HOTKEY_FLAG_LENGTH) // It's not a hotkey such as ",::action".
+								&& _tcsncmp(cp - 1, COMPOSITE_DELIMITER, COMPOSITE_DELIMITER_LENGTH)   ) // ...and it's not a hotkey such as ", & y::action".
 								is_continuation_line = true; // Override the default set earlier.
 						}
 						else // First symbol in line isn't a comma but some other operator symbol.
@@ -2299,40 +1812,40 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					break;
 				} // if (!in_continuation_section)
 
-				  // OTHERWISE in_continuation_section != 0, so the above has found the first line of a new
-				  // continuation section.
+				// OTHERWISE in_continuation_section != 0, so the above has found the first line of a new
+				// continuation section.
 				continuation_line_count = 0; // Reset for this new section.
-											 // Otherwise, parse options.  First set the defaults, which can be individually overridden
-											 // by any options actually present.  RTrim defaults to ON for two reasons:
-											 // 1) Whitespace often winds up at the end of a lines in a text editor by accident.  In addition,
-											 //    whitespace at the end of any consolidated/merged line will be rtrim'd anyway, since that's
-											 //    how command parsing works.
-											 // 2) Copy & paste from the forum and perhaps other web sites leaves a space at the end of each
-											 //    line.  Although this behavior is probably site/browser-specific, it's a consideration.
+				// Otherwise, parse options.  First set the defaults, which can be individually overridden
+				// by any options actually present.  RTrim defaults to ON for two reasons:
+				// 1) Whitespace often winds up at the end of a lines in a text editor by accident.  In addition,
+				//    whitespace at the end of any consolidated/merged line will be rtrim'd anyway, since that's
+				//    how command parsing works.
+				// 2) Copy & paste from the forum and perhaps other web sites leaves a space at the end of each
+				//    line.  Although this behavior is probably site/browser-specific, it's a consideration.
 				do_ltrim = g_ContinuationLTrim; // Start off at global default.
 				do_rtrim = true; // Seems best to rtrim even if this line is a hotstring, since it is very rare that trailing spaces and tabs would ever be desirable.
-								 // For hotstrings (which could be detected via *buf==':'), it seems best not to default the
-								 // escape character (`) to be literal because the ability to have `t `r and `n inside the
-								 // hotstring continuation section seems more useful/common than the ability to use the
-								 // accent character by itself literally (which seems quite rare in most languages).
+				// For hotstrings (which could be detected via *buf==':'), it seems best not to default the
+				// escape character (`) to be literal because the ability to have `t `r and `n inside the
+				// hotstring continuation section seems more useful/common than the ability to use the
+				// accent character by itself literally (which seems quite rare in most languages).
 				literal_escapes = false;
 				literal_derefs = false;
 				literal_delimiters = true; // This is the default even for hotstrings because although using (*buf != ':') would improve loading performance, it's not a 100% reliable way to detect hotstrings.
-										   // The default is linefeed because:
-										   // 1) It's the best choice for hotstrings, for which the line continuation mechanism is well suited.
-										   // 2) It's good for FileAppend.
-										   // 3) Minor: Saves memory in large sections by being only one character instead of two.
+				// The default is linefeed because:
+				// 1) It's the best choice for hotstrings, for which the line continuation mechanism is well suited.
+				// 2) It's good for FileAppend.
+				// 3) Minor: Saves memory in large sections by being only one character instead of two.
 				suffix[0] = '\n';
 				suffix[1] = '\0';
 				suffix_length = 1;
 				for (next_option = omit_leading_whitespace(next_buf + 1); *next_option; next_option = omit_leading_whitespace(option_end))
 				{
 					// Find the end of this option item:
-					if (!(option_end = StrChrAny(next_option, _T(" \t"))))  // Space or tab.
+					if (   !(option_end = StrChrAny(next_option, _T(" \t")))   )  // Space or tab.
 						option_end = next_option + _tcslen(next_option); // Set to position of zero terminator instead.
 
-																		 // Temporarily terminate to help eliminate ambiguity for words contained inside other words,
-																		 // such as hypothetical "Checked" inside of "CheckedGray":
+					// Temporarily terminate to help eliminate ambiguity for words contained inside other words,
+					// such as hypothetical "Checked" inside of "CheckedGray":
 					orig_char = *option_end;
 					*option_end = '\0';
 
@@ -2340,9 +1853,9 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					{
 						next_option += 4;
 						tcslcpy(suffix, next_option, _countof(suffix)); // The word "Join" by itself will product an empty string, as documented.
-																		// Passing true for the last parameter supports `s as the special escape character,
-																		// which allows space to be used by itself and also at the beginning or end of a string
-																		// containing other chars.
+						// Passing true for the last parameter supports `s as the special escape character,
+						// which allows space to be used by itself and also at the beginning or end of a string
+						// containing other chars.
 						ConvertEscapeSequences(suffix, g_EscapeChar, true);
 						suffix_length = _tcslen(suffix);
 					}
@@ -2391,17 +1904,17 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					*option_end = orig_char; // Undo the temporary termination.
 				} // for() each item in option list
 
-				  // "has_continuation_section" indicates whether the line we're about to construct is partially
-				  // composed of continuation lines beneath it.  It's separate from continuation_line_count
-				  // in case there is another continuation section immediately after/adjacent to the first one,
-				  // but the second one doesn't have any lines in it:
+				// "has_continuation_section" indicates whether the line we're about to construct is partially
+				// composed of continuation lines beneath it.  It's separate from continuation_line_count
+				// in case there is another continuation section immediately after/adjacent to the first one,
+				// but the second one doesn't have any lines in it:
 				has_continuation_section = true;
 
 				continue; // Now that the open-parenthesis of this continuation section has been processed, proceed to the next line.
 			} // if (!in_continuation_section)
 
-			  // Since above didn't "continue", we're in the continuation section and thus next_buf contains
-			  // either a line to be appended onto buf or the closing parenthesis of this continuation section.
+			// Since above didn't "continue", we're in the continuation section and thus next_buf contains
+			// either a line to be appended onto buf or the closing parenthesis of this continuation section.
 			if (next_buf_length == -1) // Compare directly to -1 since length is unsigned.
 				return ScriptError(ERR_MISSING_CLOSE_PAREN, buf);
 			if (next_buf_length == -2) // v1.0.45.03: Special flag that means "this is a commented-out line to be
@@ -2411,8 +1924,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			{
 				in_continuation_section = 0; // Facilitates back-to-back continuation sections and proper incrementing of phys_line_number.
 				next_buf_length = rtrim(next_buf); // Done because GetLine() wouldn't have done it due to have told it we're in a continuation section.
-												   // Anything that lies to the right of the close-parenthesis gets appended verbatim, with
-												   // no trimming (for flexibility) and no options-driven translation:
+				// Anything that lies to the right of the close-parenthesis gets appended verbatim, with
+				// no trimming (for flexibility) and no options-driven translation:
 				cp = next_buf + 1;  // Use temp var cp to avoid altering next_buf (for maintainability).
 				--next_buf_length;  // This is now the length of cp, not next_buf.
 			}
@@ -2465,7 +1978,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					next_buf_length = _tcslen(next_buf);
 			} // Handling of a normal line within a continuation section.
 
-			  // Must check the combined length only after anything that might have expanded the string above.
+			// Must check the combined length only after anything that might have expanded the string above.
 			if (buf_length + next_buf_length + suffix_length >= LINE_SIZE)
 				return ScriptError(ERR_CONTINUATION_SECTION_TOO_LONG, cp);
 
@@ -2489,19 +2002,19 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			}
 		} // for() each sub-line (continued line) that composes this line.
 
-	process_completed_line:
+process_completed_line:
 		// buf_length can't be -1 (though next_buf_length can) because outer loop's condition prevents it:
 		if (!buf_length) // Done only after the line number increments above so that the physical line number is properly tracked.
 			goto continue_main_loop; // In lieu of "continue", for performance.
 
-									 // Since neither of the above executed, or they did but didn't "continue",
-									 // buf now contains a non-commented line, either by itself or built from
-									 // any continuation sections/lines that might have been present.  Also note that
-									 // by design, phys_line_number will be greater than mCombinedLineNumber whenever
-									 // a continuation section/lines were used to build this combined line.
+		// Since neither of the above executed, or they did but didn't "continue",
+		// buf now contains a non-commented line, either by itself or built from
+		// any continuation sections/lines that might have been present.  Also note that
+		// by design, phys_line_number will be greater than mCombinedLineNumber whenever
+		// a continuation section/lines were used to build this combined line.
 
-									 // If there's a previous line waiting to be processed, its fate can now be determined based on the
-									 // nature of *this* line:
+		// If there's a previous line waiting to be processed, its fate can now be determined based on the
+		// nature of *this* line:
 		if (*pending_buf)
 		{
 			// Somewhat messy to decrement then increment later, but it's probably easier than the
@@ -2514,8 +2027,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			// and the line that follows it, each of which will have previously incremented mCombinedLineNumber.
 			saved_line_number = mCombinedLineNumber;
 			mCombinedLineNumber = pending_buf_line_number;  // Done so that any syntax errors that occur during the calls below will report the correct line number.
-															// Open brace means this is a function definition. NOTE: buf was already ltrimmed by GetLine().
-															// Could use *g_act[ACT_BLOCK_BEGIN].Name instead of '{', but it seems too elaborate to be worth it.
+			// Open brace means this is a function definition. NOTE: buf was already ltrimmed by GetLine().
+			// Could use *g_act[ACT_BLOCK_BEGIN].Name instead of '{', but it seems too elaborate to be worth it.
 			if (*buf == '{' || pending_buf_has_brace) // v1.0.41: Support one-true-brace, e.g. fn(...) {
 			{
 				switch (pending_buf_type)
@@ -2576,7 +2089,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				if (!pending_buf_has_brace)
 				{
 					// This is the open-brace of a class definition, so requires no further processing.
-					if (!*(cp = omit_leading_whitespace(buf + 1)))
+					if (  !*(cp = omit_leading_whitespace(buf + 1))  )
 					{
 						mCombinedLineNumber = saved_line_number;
 						goto continue_main_loop;
@@ -2616,7 +2129,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					*mClassName = '\0';
 			}
 			// Allow multiple end-braces or other declarations to the right of "}":
-			if (*(buf = omit_leading_whitespace(buf + 1)))
+			if (   *(buf = omit_leading_whitespace(buf + 1))   )
 			{
 				buf_length = _tcslen(buf); // Update.
 				mCurrLine = NULL;  // To signify that we're in transition, trying to load a new line.
@@ -2630,7 +2143,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			if (!_tcsnicmp(buf, _T("Get"), 3) || !_tcsnicmp(buf, _T("Set"), 3))
 			{
 				LPTSTR cp = omit_leading_whitespace(buf + 3);
-				if (!*cp || (*cp == '{' && !cp[1]))
+				if ( !*cp || (*cp == '{' && !cp[1]) )
 				{
 					// Defer this line until the next line comes in to simplify handling of '{' and OTB.
 					// For simplicity, pass the property definition to DefineFunc instead of the actual
@@ -2661,7 +2174,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			pending_buf_type = Pending_Func;
 			goto continue_main_loop; // In lieu of "continue", for performance.
 		}
-
+		
 		if (!g->CurrentFunc)
 		{
 			if (LPTSTR class_name = IsClassDefinition(buf, pending_buf_has_brace))
@@ -2676,7 +2189,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			if (mClassObjectCount)
 			{
 				// Check for assignment first, in case of something like "Static := 123".
-				for (cp = buf; IS_IDENTIFIER_CHAR(*cp) || *cp == '.'; ++cp);
+				for (cp = buf; cisalnum(*cp) || *cp == '_' || *cp == '.'; ++cp);
 				if (cp > buf) // i.e. buf begins with an identifier.
 				{
 					cp = omit_leading_whitespace(cp);
@@ -2686,7 +2199,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 							return FAIL;
 						goto continue_main_loop;
 					}
-					if (!*cp || *cp == '[' || (*cp == '{' && !cp[1])) // Property
+					if ( !*cp || *cp == '[' || (*cp == '{' && !cp[1]) ) // Property
 					{
 						size_t length = _tcslen(buf);
 						if (pending_buf_has_brace = (buf[length - 1] == '{'))
@@ -2694,7 +2207,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 							// Omit '{' and trailing whitespace from further consideration.
 							rtrim(buf, length - 1);
 						}
-
+						
 						// Defer this line until the next line comes in to simplify handling of '{' and OTB:
 						_tcscpy(pending_buf, buf);
 						pending_buf_line_number = mCombinedLineNumber;
@@ -2711,7 +2224,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				if (*buf == '#') // See the identical section further below for comments.
 				{
 					saved_line_number = mCombinedLineNumber;
-					switch (IsDirective(buf))
+					switch(IsDirective(buf))
 					{
 					case CONDITION_TRUE:
 						mCurrFileIndex = source_file_index;
@@ -2737,7 +2250,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 		//    ++phys_line_number;
 		// 5) "mCurrLine = NULL": Probably not necessary since it's only for error reporting.  Worst thing
 		//    that could happen is that syntax errors would be thrown off, which testing shows isn't the case.
-	examine_line:
+examine_line:
 		// "::" alone isn't a hotstring, it's a label whose name is colon.
 		// Below relies on the fact that no valid hotkey can start with a colon, since
 		// ": & somekey" is not valid (since colon is a shifted key) and colon itself
@@ -2750,10 +2263,10 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			if (buf[1] != ':')
 			{
 				hotstring_options = buf + 1; // Point it to the hotstring's option letters.
-											 // The following relies on the fact that options should never contain a literal colon.
-											 // ALSO, the following doesn't use IS_HOTSTRING_OPTION() for backward compatibility,
-											 // performance, and because it seems seldom if ever necessary at this late a stage.
-				if (!(hotstring_start = _tcschr(hotstring_options, ':')))
+				// The following relies on the fact that options should never contain a literal colon.
+				// ALSO, the following doesn't use IS_HOTSTRING_OPTION() for backward compatibility,
+				// performance, and because it seems seldom if ever necessary at this late a stage.
+				if (   !(hotstring_start = _tcschr(hotstring_options, ':'))   )
 					hotstring_start = NULL; // Indicate that this isn't a hotstring after all.
 				else
 					++hotstring_start; // Points to the hotstring itself.
@@ -2761,7 +2274,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			else // Double-colon, so it's a hotstring if there's more after this (but this means no options are present).
 				if (buf[2])
 					hotstring_start = buf + 2; // And leave hotstring_options at its default of NULL to indicate no options.
-											   //else it's just a naked "::", which is considered to be an ordinary label whose name is colon.
+				//else it's just a naked "::", which is considered to be an ordinary label whose name is colon.
 		}
 		if (hotstring_start)
 		{
@@ -2781,8 +2294,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					if (*cp1 == ':') // Found a non-escaped double-colon, so this is the right one.
 					{
 						hotkey_flag = cp++;  // Increment to have loop skip over both colons.
-											 // and the continue with the loop so that escape sequences in the replacement
-											 // text (if there is replacement text) are also translated.
+						// and the continue with the loop so that escape sequences in the replacement
+						// text (if there is replacement text) are also translated.
 					}
 					// else just a single colon, or the second colon of an escaped pair (`::), so continue.
 					continue;
@@ -2790,19 +2303,19 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				switch (*cp1)
 				{
 					// Only lowercase is recognized for these:
-				case 'a': *cp1 = '\a'; break;  // alert (bell) character
-				case 'b': *cp1 = '\b'; break;  // backspace
-				case 'f': *cp1 = '\f'; break;  // formfeed
-				case 'n': *cp1 = '\n'; break;  // newline
-				case 'r': *cp1 = '\r'; break;  // carriage return
-				case 't': *cp1 = '\t'; break;  // horizontal tab
-				case 'v': *cp1 = '\v'; break;  // vertical tab
-											   // Otherwise, if it's not one of the above, the escape-char is considered to
-											   // mark the next character as literal, regardless of what it is. Examples:
-											   // `` -> `
-											   // `:: -> :: (effectively)
-											   // `; -> ;
-											   // `c -> c (i.e. unknown escape sequences resolve to the char after the `)
+					case 'a': *cp1 = '\a'; break;  // alert (bell) character
+					case 'b': *cp1 = '\b'; break;  // backspace
+					case 'f': *cp1 = '\f'; break;  // formfeed
+					case 'n': *cp1 = '\n'; break;  // newline
+					case 'r': *cp1 = '\r'; break;  // carriage return
+					case 't': *cp1 = '\t'; break;  // horizontal tab
+					case 'v': *cp1 = '\v'; break;  // vertical tab
+					// Otherwise, if it's not one of the above, the escape-char is considered to
+					// mark the next character as literal, regardless of what it is. Examples:
+					// `` -> `
+					// `:: -> :: (effectively)
+					// `; -> ;
+					// `c -> c (i.e. unknown escape sequences resolve to the char after the `)
 				}
 				// Below has a final +1 to include the terminator:
 				tmemmove(cp, cp1, _tcslen(cp1) + 1);
@@ -2839,10 +2352,10 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					break;
 				case CONDITION_FALSE:
 					return FAIL; // It's an invalid hotkey and above already displayed the error message.
-								 //case CONDITION_TRUE:
-								 // It's a key that doesn't exist on the current keyboard layout.  Leave hotkey_flag set
-								 // so that the section below handles it as a hotkey.  This allows it to end the auto-exec
-								 // section and register the appropriate label even though it won't be an active hotkey.
+				//case CONDITION_TRUE:
+					// It's a key that doesn't exist on the current keyboard layout.  Leave hotkey_flag set
+					// so that the section below handles it as a hotkey.  This allows it to end the auto-exec
+					// section and register the appropriate label even though it won't be an active hotkey.
 				}
 				*cp = orig_char; // Undo the temp. termination above.
 			}
@@ -2877,21 +2390,21 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				ltrim(hotkey_flag); // Has already been rtrimmed by GetLine().
 				rtrim(buf); // Trim the new substring inside of buf (due to temp termination). It has already been ltrimmed.
 				cp = hotkey_flag; // Set default, conditionally overridden below (v1.0.44.07).
-								  // v1.0.40: Check if this is a remap rather than hotkey:
-				if (*hotkey_flag // This hotkey's action is on the same line as its label.
-					&& (remap_dest_vk = hotkey_flag[1] ? TextToVK(cp = Hotkey::TextToModifiers(hotkey_flag, NULL)) : 0xFF)) // And the action appears to be a remap destination rather than a command.
-																															// For above:
-																															// Fix for v1.0.44.07: Set remap_dest_vk to 0xFF if hotkey_flag's length is only 1 because:
-																															// 1) It allows a destination key that doesn't exist in the keyboard layout (such as 6::ð in
-																															//    English).
-																															// 2) It improves performance a little by not calling TextToVK except when the destination key
-																															//    might be a mouse button or some longer key name whose actual/correct VK value is relied
-																															//    upon by other places below.
-																															// Fix for v1.0.40.01: Since remap_dest_vk is also used as the flag to indicate whether
-																															// this line qualifies as a remap, must do it last in the statement above.  Otherwise,
-																															// the statement might short-circuit and leave remap_dest_vk as non-zero even though
-																															// the line shouldn't be a remap.  For example, I think a hotkey such as "x & y::return"
-																															// would trigger such a bug.
+				// v1.0.40: Check if this is a remap rather than hotkey:
+				if (   *hotkey_flag // This hotkey's action is on the same line as its label.
+					&& (remap_dest_vk = hotkey_flag[1] ? TextToVK(cp = Hotkey::TextToModifiers(hotkey_flag, NULL)) : 0xFF)   ) // And the action appears to be a remap destination rather than a command.
+					// For above:
+					// Fix for v1.0.44.07: Set remap_dest_vk to 0xFF if hotkey_flag's length is only 1 because:
+					// 1) It allows a destination key that doesn't exist in the keyboard layout (such as 6::ð in
+					//    English).
+					// 2) It improves performance a little by not calling TextToVK except when the destination key
+					//    might be a mouse button or some longer key name whose actual/correct VK value is relied
+					//    upon by other places below.
+					// Fix for v1.0.40.01: Since remap_dest_vk is also used as the flag to indicate whether
+					// this line qualifies as a remap, must do it last in the statement above.  Otherwise,
+					// the statement might short-circuit and leave remap_dest_vk as non-zero even though
+					// the line shouldn't be a remap.  For example, I think a hotkey such as "x & y::return"
+					// would trigger such a bug.
 				{
 					// These will be ignored in other stages if it turns out not to be a remap later below:
 					remap_source_vk = TextToVK(cp1 = Hotkey::TextToModifiers(buf, NULL)); // An earlier stage verified that it's a valid hotkey, though VK could be zero.
@@ -2906,9 +2419,9 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					if (cp - hotkey_flag < _countof(remap_dest_modifiers)) // Avoid reading beyond the end.
 						remap_dest_modifiers[cp - hotkey_flag] = '\0';   // Terminate at the proper end of the modifier string.
 					remap_stage = 0; // Init for use in the next stage.
-									 // In the unlikely event that the dest key has the same name as a command, disqualify it
-									 // from being a remap (as documented).  v1.0.40.05: If the destination key has any modifiers,
-									 // it is unambiguously a key name rather than a command, so the switch() isn't necessary.
+					// In the unlikely event that the dest key has the same name as a command, disqualify it
+					// from being a remap (as documented).  v1.0.40.05: If the destination key has any modifiers,
+					// it is unambiguously a key name rather than a command, so the switch() isn't necessary.
 					if (*remap_dest_modifiers)
 						goto continue_main_loop; // It will see that remap_dest_vk is non-zero and act accordingly.
 					switch (remap_dest_vk)
@@ -2918,8 +2431,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 						if (StrChrAny(hotkey_flag, _T(" \t,"))) // Not using g_delimiter (reduces code size/complexity).
 							break; // Any space, tab, or enter means this is a command rather than a remap destination.
 						goto continue_main_loop; // It will see that remap_dest_vk is non-zero and act accordingly.
-												 // "Return" and "Pause" as destination keys are always considered commands instead.
-												 // This is documented and is done to preserve backward compatibility.
+					// "Return" and "Pause" as destination keys are always considered commands instead.
+					// This is documented and is done to preserve backward compatibility.
 					case VK_RETURN:
 						// v1.0.40.05: Although "Return" can't be a destination, "Enter" can be.  Must compare
 						// to "Return" not "Enter" so that things like "vk0d" (the VK of "Enter") can also be a
@@ -2958,7 +2471,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			// Update: Below must check if there are any true hotkey labels, not just regular labels.
 			// Otherwise, a normal (non-hotkey) label in the autoexecute section would count and
 			// thus the RETURN would never be added here, even though it should be:
-
+			
 			// Notes about the below macro:
 			// Fix for v1.0.34: Don't point labels to this particular RETURN so that labels
 			// can point to the very first hotkey or hotstring in a script.  For example:
@@ -2967,7 +2480,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			// ^!z::ToolTip Without the fix`, this is never displayed by "Goto Test".
 			// UCHAR_MAX signals it not to point any pending labels to this RETURN.
 			// mCurrLine = NULL -> signifies that we're in transition, trying to load a new one.
-#define CHECK_mNoHotkeyLabels \
+			#define CHECK_mNoHotkeyLabels \
 			if (mNoHotkeyLabels)\
 			{\
 				mNoHotkeyLabels = false;\
@@ -2976,13 +2489,13 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				mCurrLine = NULL;\
 			}
 			CHECK_mNoHotkeyLabels
-				// For hotstrings, the below makes the label include leading colon(s) and the full option
-				// string (if any) so that the uniqueness of labels is preserved.  For example, we want
-				// the following two hotstring labels to be unique rather than considered duplicates:
-				// ::abc::
-				// :c:abc::
-				if (!AddLabel(buf, true)) // Always add a label before adding the first line of its section.
-					return FAIL;
+			// For hotstrings, the below makes the label include leading colon(s) and the full option
+			// string (if any) so that the uniqueness of labels is preserved.  For example, we want
+			// the following two hotstring labels to be unique rather than considered duplicates:
+			// ::abc::
+			// :c:abc::
+			if (!AddLabel(buf, true)) // Always add a label before adding the first line of its section.
+				return FAIL;
 			hook_action = 0; // Set default.
 			if (*hotkey_flag) // This hotkey's action is on the same line as its label.
 			{
@@ -2990,7 +2503,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					// Don't add the alt-tabs as a line, since it has no meaning as a script command.
 					// But do put in the Return regardless, in case this label is ever jumped to
 					// via Goto/Gosub:
-					if (!(hook_action = Hotkey::ConvertAltTab(hotkey_flag, false)))
+					if (   !(hook_action = Hotkey::ConvertAltTab(hotkey_flag, false))   )
 						if (!ParseAndAddLine(hotkey_flag))
 							return FAIL;
 				// Also add a Return that's implicit for a single-line hotkey.  This is also
@@ -3061,14 +2574,14 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					}
 				}
 				else // No parent hotkey yet, so create it.
-					if (!(hk = Hotkey::AddHotkey(mLastLabel, hook_action, mLastLabel->mName, suffix_has_tilde, false)))
+					if (   !(hk = Hotkey::AddHotkey(mLastLabel, hook_action, mLastLabel->mName, suffix_has_tilde, false))   )
 					{
 						if (hotkey_validity != CONDITION_TRUE)
 							return FAIL; // It already displayed the error.
-										 // This hotkey uses a single-character key name, which could be valid on some other
-										 // keyboard layout.  Allow the script to start, but warn the user about the problem.
-										 // Note that this hotkey's label is still valid even though the hotkey wasn't created.
-#ifndef AT
+						// This hotkey uses a single-character key name, which could be valid on some other
+						// keyboard layout.  Allow the script to start, but warn the user about the problem.
+						// Note that this hotkey's label is still valid even though the hotkey wasn't created.
+#ifndef AUTOHOTKEYSC
 						if (!mIncludeLibraryFunctionsThenExit) // Current keyboard layout is not relevant in /iLib mode.
 #endif
 						{
@@ -3080,7 +2593,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			goto continue_main_loop; // In lieu of "continue", for performance.
 		} // if (is_label = ...)
 
-		  // Otherwise, not a hotkey or hotstring.  Check if it's a generic, non-hotkey label:
+		// Otherwise, not a hotkey or hotstring.  Check if it's a generic, non-hotkey label:
 		if (buf[buf_length - 1] == ':') // Labels must end in a colon (buf was previously rtrimmed).
 		{
 			if (buf_length == 1) // v1.0.41.01: Properly handle the fact that this line consists of only a colon.
@@ -3123,7 +2636,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 		if (*buf == '#')
 		{
 			saved_line_number = mCombinedLineNumber; // Backup in case IsDirective() processes an include file, which would change mCombinedLineNumber's value.
-			switch (IsDirective(buf)) // Note that it may alter the contents of buf, at least in the case of #IfWin.
+			switch(IsDirective(buf)) // Note that it may alter the contents of buf, at least in the case of #IfWin.
 			{
 			case CONDITION_TRUE:
 				// Since the directive may have been a #include which called us recursively,
@@ -3135,7 +2648,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				goto continue_main_loop; // In lieu of "continue", for performance.
 			case FAIL: // IsDirective() already displayed the error.
 				return FAIL;
-				//case CONDITION_FALSE: Do nothing; let processing below handle it.
+			//case CONDITION_FALSE: Do nothing; let processing below handle it.
 			}
 		}
 		// Otherwise, treat it as a normal script line.
@@ -3145,7 +2658,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 			if (!AddLine(*buf == '{' ? ACT_BLOCK_BEGIN : ACT_BLOCK_END))
 				return FAIL;
 			// Allow any command/action, directive or label to the right of "{" or "}":
-			if (*(buf = omit_leading_whitespace(buf + 1)))
+			if (   *(buf = omit_leading_whitespace(buf + 1))   )
 			{
 				buf_length = _tcslen(buf); // Update.
 				mCurrLine = NULL;  // To signify that we're in transition, trying to load a new line.
@@ -3160,7 +2673,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 		if (!ParseAndAddLine(buf))
 			return FAIL;
 
-	continue_main_loop: // This method is used in lieu of "continue" for performance and code size reduction.
+continue_main_loop: // This method is used in lieu of "continue" for performance and code size reduction.
 		if (remap_dest_vk)
 		{
 			// For remapping, decided to use a "macro expansion" approach because I think it's considerably
@@ -3181,20 +2694,20 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				buf_length = _stprintf(buf, _T("*%s::"), remap_source); // Should be no risk of buffer overflow due to prior validation.
 				goto examine_line; // Have the main loop process the contents of "buf" as though it came in from the script.
 			case 2: // Stage 2.
-					// Copied into a writable buffer for maintainability: AddLine() might rely on this.
-					// Also, it seems unnecessary to set press-duration to -1 even though the auto-exec section might
-					// have set it to something higher than -1 because:
-					// 1) Press-duration doesn't apply to normal remappings since they use down-only and up-only events.
-					// 2) Although it does apply to remappings such as a::B and a::^b (due to press-duration being
-					//    applied after a change to modifier state), those remappings are fairly rare and supporting
-					//    a non-negative-one press-duration (almost always 0) probably adds a degree of flexibility
-					//    that may be desirable to keep.
-					// 3) SendInput may become the predominant SendMode, so press-duration won't often be in effect anyway.
-					// 4) It has been documented that remappings use the auto-execute section's press-duration.
+				// Copied into a writable buffer for maintainability: AddLine() might rely on this.
+				// Also, it seems unnecessary to set press-duration to -1 even though the auto-exec section might
+				// have set it to something higher than -1 because:
+				// 1) Press-duration doesn't apply to normal remappings since they use down-only and up-only events.
+				// 2) Although it does apply to remappings such as a::B and a::^b (due to press-duration being
+				//    applied after a change to modifier state), those remappings are fairly rare and supporting
+				//    a non-negative-one press-duration (almost always 0) probably adds a degree of flexibility
+				//    that may be desirable to keep.
+				// 3) SendInput may become the predominant SendMode, so press-duration won't often be in effect anyway.
+				// 4) It has been documented that remappings use the auto-execute section's press-duration.
 				_tcscpy(buf, _T("-1")); // Does NOT need to be "-1, -1" for SetKeyDelay (see above).
-										// The primary reason for adding Key/MouseDelay -1 is to minimize the chance that a one of
-										// these hotkey threads will get buried under some other thread such as a timer, which
-										// would disrupt the remapping if #MaxThreadsPerHotkey is at its default of 1.
+				// The primary reason for adding Key/MouseDelay -1 is to minimize the chance that a one of
+				// these hotkey threads will get buried under some other thread such as a timer, which
+				// would disrupt the remapping if #MaxThreadsPerHotkey is at its default of 1.
 				AddLine(remap_dest_is_mouse ? ACT_SETMOUSEDELAY : ACT_SETKEYDELAY, &buf, 1, NULL); // PressDuration doesn't need to be specified because it doesn't affect down-only and up-only events.
 				if (remap_keybd_to_mouse)
 				{
@@ -3222,17 +2735,17 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 					case VK_RCONTROL:
 						extra_event = _T("{RCtrl up}");
 						break;
-						// Below is commented out because its only purpose was to allow a shift key remapped to alt
-						// to be able to alt-tab.  But that wouldn't work correctly due to the need for the following
-						// hotkey, which does more harm than good by impacting the normal Alt key's ability to alt-tab
-						// (if the normal Alt key isn't remapped): *Tab::Send {Blind}{Tab}
-						//case VK_LSHIFT:
-						//case VK_SHIFT:
-						//	extra_event = "{LShift up}";
-						//	break;
-						//case VK_RSHIFT:
-						//	extra_event = "{RShift up}";
-						//	break;
+					// Below is commented out because its only purpose was to allow a shift key remapped to alt
+					// to be able to alt-tab.  But that wouldn't work correctly due to the need for the following
+					// hotkey, which does more harm than good by impacting the normal Alt key's ability to alt-tab
+					// (if the normal Alt key isn't remapped): *Tab::Send {Blind}{Tab}
+					//case VK_LSHIFT:
+					//case VK_SHIFT:
+					//	extra_event = "{LShift up}";
+					//	break;
+					//case VK_RSHIFT:
+					//	extra_event = "{RShift up}";
+					//	break;
 					}
 					break;
 				}
@@ -3255,7 +2768,7 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 				break; // Fall through to the next section so that script loading can resume at the next line.
 			}
 		} // if (remap_dest_vk)
-		  // Since above didn't "continue", resume loading script line by line:
+		// Since above didn't "continue", resume loading script line by line:
 		buf = next_buf;
 		buf_length = next_buf_length;
 		next_buf = (buf == buf1) ? buf2 : buf1;
@@ -3287,8 +2800,8 @@ ResultType Script::LoadIncludedFile(LPTSTR aFileSpec, bool aAllowDuplicateInclud
 
 	++mCombinedLineNumber; // L40: Put the implicit ACT_EXIT on the line after the last physical line (for the debugger).
 
-						   // This is not required, it is called by the destructor.
-						   // fp->Close();
+	// This is not required, it is called by the destructor.
+	// fp->Close();
 	return OK;
 }
 
@@ -3300,12 +2813,12 @@ size_t Script::GetLine(LPTSTR aBuf, int aMaxCharsToRead, int aInContinuationSect
 
 	if (!aBuf || !ts) return -1;
 	if (aMaxCharsToRead < 1) return 0;
-	if (!(aBuf_length = ts->ReadLine(aBuf, aMaxCharsToRead))) // end-of-file or error
+	if (  !(aBuf_length = ts->ReadLine(aBuf, aMaxCharsToRead))  ) // end-of-file or error
 	{
 		*aBuf = '\0';  // Reset since on error, contents added by fgets() are indeterminate.
 		return -1;
 	}
-	if (aBuf[aBuf_length - 1] == '\n')
+	if (aBuf[aBuf_length-1] == '\n')
 		--aBuf_length;
 	aBuf[aBuf_length] = '\0';
 
@@ -3322,7 +2835,7 @@ size_t Script::GetLine(LPTSTR aBuf, int aMaxCharsToRead, int aInContinuationSect
 			// ) ; Same line comment.
 			if (*cp != ')') // This isn't the last line of the continuation section, so leave the line untrimmed (caller will apply the ltrim setting on its own).
 				return aBuf_length; // Earlier sections are responsible for keeping aBufLength up-to-date with any changes to aBuf.
-									//else this line starts with ')', so continue on to later section that checks for a same-line comment on its right side.
+			//else this line starts with ')', so continue on to later section that checks for a same-line comment on its right side.
 		}
 		else // aInContinuationSection == CONTINUATION_SECTION_WITH_COMMENTS (i.e. comments are allowed in this continuation section).
 		{
@@ -3394,8 +2907,8 @@ size_t Script::GetLine(LPTSTR aBuf, int aMaxCharsToRead, int aInContinuationSect
 				--aBuf_length;
 				// Then continue looking for others.
 			}
-		// else there wasn't any whitespace to its left, so keep looking in case there's
-		// another further on in the line.
+			// else there wasn't any whitespace to its left, so keep looking in case there's
+			// another further on in the line.
 	} // for()
 
 	return aBuf_length; // The above is responsible for keeping aBufLength up-to-date with any changes to aBuf.
@@ -3412,9 +2925,9 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 // not be unconditionally ignored, just because it starts with '#', since it is a valid hotkey:
 // #y::run, notepad
 {
-	TCHAR end_flags[] = { ' ', '\t', g_delimiter, '\0' }; // '\0' must be last.
+	TCHAR end_flags[] = {' ', '\t', g_delimiter, '\0'}; // '\0' must be last.
 	LPTSTR directive_end, parameter_raw;
-	if (!(directive_end = StrChrAny(aBuf, end_flags)))
+	if (   !(directive_end = StrChrAny(aBuf, end_flags))   )
 	{
 		directive_end = aBuf + _tcslen(aBuf); // Point it to the zero terminator.
 		parameter_raw = NULL;
@@ -3434,17 +2947,17 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 		else // It's a delimiter, so "parameter" will be whatever non-whitespace character follows it, if any.
 			if (!*(parameter = omit_leading_whitespace(parameter_raw + 1)))
 				parameter = NULL;
-	//else leave it set to the value returned by omit_leading_whitespace().
+			//else leave it set to the value returned by omit_leading_whitespace().
 
 	int value; // Helps detect values that are too large, since some of the target globals are UCHAR.
 
-			   // Use _tcsnicmp() so that a match is found as long as aBuf starts with the string in question.
-			   // e.g. so that "#SingleInstance, on" will still work too, but
-			   // "#a::run, something, "#SingleInstance" (i.e. a hotkey) will not be falsely detected
-			   // due to using a more lenient function such as tcscasestr().
-			   // UPDATE: Using strlicmp() now so that overlapping names, such as #MaxThreads and #MaxThreadsPerHotkey,
-			   // won't get mixed up:
-#define IS_DIRECTIVE_MATCH(directive) (!tcslicmp(aBuf, directive, directive_name_length))
+	// Use _tcsnicmp() so that a match is found as long as aBuf starts with the string in question.
+	// e.g. so that "#SingleInstance, on" will still work too, but
+	// "#a::run, something, "#SingleInstance" (i.e. a hotkey) will not be falsely detected
+	// due to using a more lenient function such as tcscasestr().
+	// UPDATE: Using strlicmp() now so that overlapping names, such as #MaxThreads and #MaxThreadsPerHotkey,
+	// won't get mixed up:
+	#define IS_DIRECTIVE_MATCH(directive) (!tcslicmp(aBuf, directive, directive_name_length))
 	size_t directive_name_length = directive_end - aBuf; // To avoid calculating it every time in the macro above.
 
 	bool is_include_again = false; // Set default in case of short-circuit boolean.
@@ -3453,7 +2966,7 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 		// Standalone EXEs ignore this directive since the included files were already merged in
 		// with the main file when the script was compiled.  These should have been removed
 		// or commented out by Ahk2Exe, but just in case, it's safest to ignore them:
-#ifdef AT
+#ifdef AUTOHOTKEYSC
 		return CONDITION_TRUE;
 #else
 		// If the below decision is ever changed, be sure to update ahk2exe with the same change:
@@ -3498,7 +3011,7 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 			//else invalid syntax; treat it as a regular #include which will almost certainly fail.
 		}
 
-		size_t space_remaining = LINE_SIZE - (parameter - aBuf);
+		size_t space_remaining = LINE_SIZE - (parameter-aBuf);
 		TCHAR buf[MAX_PATH];
 		StrReplace(parameter, _T("%A_ScriptDir%"), mFileDir, SCS_INSENSITIVE, 1, space_remaining); // v1.0.35.11.  Caller has ensured string is writable.
 		StrReplace(parameter, _T("%A_LineFile%"), Line::sSourceFile[mCurrFileIndex], SCS_INSENSITIVE, 1, space_remaining); // v1.1.11: Support A_LineFile to allow paths relative to current file regardless of working dir; e.g. %A_LineFile%\..\fileinsamedir.ahk.
@@ -3589,36 +3102,39 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 	{
 		if (!parameter) // The omission of the parameter indicates that any existing criteria should be turned off.
 		{
-			g_HotCriterion = NULL; // Indicate that no criteria are in effect for subsequent hotkeys.
+			g_HotCriterion = HOT_NO_CRITERION; // Indicate that no criteria are in effect for subsequent hotkeys.
+			g_HotWinTitle = _T(""); // Helps maintainability and some things might rely on it.
+			g_HotWinText = _T("");  //
+			g_HotExprIndex = -1;
 			return CONDITION_TRUE;
 		}
-
-		// Check for a duplicate #If expression;
-		//  - Prevents duplicate hotkeys under separate copies of the same expression.
-		//  - Hotkey,If would only be able to select the first expression with the given source code.
-		//  - Conserves memory.
-		if (g_HotCriterion = FindHotkeyIfExpr(parameter))
-			return CONDITION_TRUE;
-
+		
 		Func *current_func = g->CurrentFunc;
 		g->CurrentFunc = NULL; // Use global scope.
 		mNoUpdateLabels = true; // Avoid pointing any pending labels at this line.
-
+		
 		if (!ParseAndAddLine(parameter, ACT_HOTKEY_IF, 0, _T(""))) // Pass non-NULL for aActionName.
 			return FAIL;
-
+		
 		mNoUpdateLabels = false;
 		g->CurrentFunc = current_func;
-
+		
 		Line *hot_expr_line = mLastLine;
 
 		// Set the new criterion.
-		if (!(g_HotCriterion = AddHotkeyIfExpr()))
-			return FAIL;
-		g_HotCriterion->Type = HOT_IF_EXPR;
-		g_HotCriterion->ExprLine = hot_expr_line;
-		g_HotCriterion->WinTitle = hot_expr_line->mArg[0].text;
-		g_HotCriterion->WinText = _T("");
+		g_HotCriterion = HOT_IF_EXPR;
+		// Use the expression text to identify hotkey variants.
+		g_HotWinTitle = hot_expr_line->mArg[0].text;
+		g_HotWinText = _T("");
+		if (g_HotExprLineCount + 1 > g_HotExprLineCountMax)
+		{	// Allocate or reallocate g_HotExprLines.
+			g_HotExprLineCountMax += 100;
+			g_HotExprLines = (Line**)realloc(g_HotExprLines, g_HotExprLineCountMax * sizeof(Line**));
+			if (!g_HotExprLines)
+				return ScriptError(ERR_OUTOFMEM);
+		}
+		g_HotExprIndex = g_HotExprLineCount++;
+		g_HotExprLines[g_HotExprIndex] = hot_expr_line;
 		return CONDITION_TRUE;
 	}
 
@@ -3632,21 +3148,23 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 
 	if (!_tcsnicmp(aBuf, _T("#IfWin"), 6))
 	{
-		HotCriterionType hot_criterion;
 		bool invert = !_tcsnicmp(aBuf + 6, _T("Not"), 3);
 		if (!_tcsnicmp(aBuf + (invert ? 9 : 6), _T("Active"), 6)) // It matches #IfWin[Not]Active.
-			hot_criterion = invert ? HOT_IF_NOT_ACTIVE : HOT_IF_ACTIVE;
+			g_HotCriterion = invert ? HOT_IF_NOT_ACTIVE : HOT_IF_ACTIVE;
 		else if (!_tcsnicmp(aBuf + (invert ? 9 : 6), _T("Exist"), 5))
-			hot_criterion = invert ? HOT_IF_NOT_EXIST : HOT_IF_EXIST;
+			g_HotCriterion = invert ? HOT_IF_NOT_EXIST : HOT_IF_EXIST;
 		else // It starts with #IfWin but isn't Active or Exist: Don't alter g_HotCriterion.
 			return CONDITION_FALSE; // Indicate unknown directive since there are currently no other possibilities.
+		g_HotExprIndex = -1;	// L4: For consistency, don't allow mixing of #if and other #ifWin criterion.
 		if (!parameter) // The omission of the parameter indicates that any existing criteria should be turned off.
 		{
-			g_HotCriterion = NULL; // Indicate that no criteria are in effect for subsequent hotkeys.
+			g_HotCriterion = HOT_NO_CRITERION; // Indicate that no criteria are in effect for subsequent hotkeys.
+			g_HotWinTitle = _T(""); // Helps maintainability and some things might rely on it.
+			g_HotWinText = _T("");  //
 			return CONDITION_TRUE;
 		}
 		LPTSTR hot_win_title = parameter, hot_win_text; // Set default for title; text is determined later.
-														// Scan for the first non-escaped comma.  If there is one, it marks the second parameter: WinText.
+		// Scan for the first non-escaped comma.  If there is one, it marks the second parameter: WinText.
 		LPTSTR cp, first_non_escaped_comma;
 		for (first_non_escaped_comma = NULL, cp = hot_win_title; ; ++cp)  // Increment to skip over the symbol just found by the inner for().
 		{
@@ -3681,18 +3199,18 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 			hot_win_text = omit_leading_whitespace(first_non_escaped_comma + 1);
 			*first_non_escaped_comma = '\0'; // Terminate at the comma to split off hot_win_title on its own.
 			rtrim(hot_win_title, first_non_escaped_comma - hot_win_title);  // Omit whitespace (see similar comment above).
-																			// The following must be done only after trimming and omitting whitespace above, so that
-																			// `s and `t can be used to insert leading/trailing spaces/tabs.  ConvertEscapeSequences()
-																			// also supports insertion of literal commas via escaped sequences.
+			// The following must be done only after trimming and omitting whitespace above, so that
+			// `s and `t can be used to insert leading/trailing spaces/tabs.  ConvertEscapeSequences()
+			// also supports insertion of literal commas via escaped sequences.
 			ConvertEscapeSequences(hot_win_text, g_EscapeChar, true);
 		}
 		else
 			hot_win_text = _T(""); // And leave hot_win_title set to the entire string because there's only one parameter.
-								   // The following must be done only after trimming and omitting whitespace above (see similar comment above).
+		// The following must be done only after trimming and omitting whitespace above (see similar comment above).
 		ConvertEscapeSequences(hot_win_title, g_EscapeChar, true);
 		// The following also handles the case where both title and text are blank, which could happen
 		// due to something weird but legit like: #IfWinActive, ,
-		if (!SetHotkeyCriterion(hot_criterion, hot_win_title, hot_win_text))
+		if (!SetGlobalHotTitleText(hot_win_title, hot_win_text))
 			return ScriptError(ERR_OUTOFMEM); // So rare that no second param is provided (since its contents may have been temp-terminated or altered above).
 		return CONDITION_TRUE;
 	} // Above completely handles all directives and non-directives that start with "#IfWin".
@@ -3708,7 +3226,7 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 				// must be included in between other chars, e.g. `n `t has a space in between.
 				// Also, EndChar  \t  will have a space and a tab since there are two spaces
 				// after the word EndChar.
-				if (!(parameter = StrChrAny(suboption, _T("\t "))))
+				if (    !(parameter = StrChrAny(suboption, _T("\t ")))   )
 					return CONDITION_TRUE;
 				tcslcpy(g_EndChars, ++parameter, _countof(g_EndChars));
 				ConvertEscapeSequences(g_EndChars, g_EscapeChar, false);
@@ -3878,8 +3396,8 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 		if (parameter)
 		{
 			// Don't allow '.' since that can be part of literal floating point numbers:
-			if (*parameter == '#' || *parameter == g_DerefChar || *parameter == g_delimiter || *parameter == '.'
-				|| (g_CommentFlagLength == 1 && *parameter == *g_CommentFlag))
+			if (   *parameter == '#' || *parameter == g_DerefChar || *parameter == g_delimiter || *parameter == '.'
+				|| (g_CommentFlagLength == 1 && *parameter == *g_CommentFlag)   )
 				return ScriptError(ERR_PARAM1_INVALID, aBuf);
 			g_EscapeChar = *parameter;
 		}
@@ -3889,8 +3407,8 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 	{
 		if (parameter)
 		{
-			if (*parameter == g_EscapeChar || *parameter == g_delimiter || *parameter == '.'
-				|| (g_CommentFlagLength == 1 && *parameter == *g_CommentFlag)) // Fix for v1.0.47.05: Allow deref char to be # as documented.
+			if (   *parameter == g_EscapeChar || *parameter == g_delimiter || *parameter == '.'
+				|| (g_CommentFlagLength == 1 && *parameter == *g_CommentFlag)   ) // Fix for v1.0.47.05: Allow deref char to be # as documented.
 				return ScriptError(ERR_PARAM1_INVALID, aBuf);
 			g_DerefChar = *parameter;
 		}
@@ -3904,8 +3422,8 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 		// (not a symbol) and omitted it.
 		if (parameter)
 		{
-			if (*parameter == '#' || *parameter == g_EscapeChar || *parameter == g_DerefChar || *parameter == '.'
-				|| (g_CommentFlagLength == 1 && *parameter == *g_CommentFlag))
+			if (   *parameter == '#' || *parameter == g_EscapeChar || *parameter == g_DerefChar || *parameter == '.'
+				|| (g_CommentFlagLength == 1 && *parameter == *g_CommentFlag)   )
 				return ScriptError(ERR_PARAM1_INVALID, aBuf);
 			g_delimiter = *parameter;
 		}
@@ -3950,7 +3468,7 @@ inline ResultType Script::IsDirective(LPTSTR aBuf)
 			param1_length = param1_end - parameter + 1;
 		}
 
-#define IS_PARAM1_MATCH(value) (!tcslicmp(parameter, value, param1_length))
+		#define IS_PARAM1_MATCH(value) (!tcslicmp(parameter, value, param1_length))
 
 		WarnType warnType;
 		if (IS_PARAM1_MATCH(_T("All")) || !param1_length)
@@ -4007,29 +3525,29 @@ void ScriptTimer::Disable()
 	--g_script.mTimerEnabledCount;
 	if (!g_script.mTimerEnabledCount && !g_nLayersNeedingTimer && !Hotkey::sJoyHotkeyCount)
 		KILL_MAIN_TIMER
-		// Above: If there are now no enabled timed subroutines, kill the main timer since there's no other
-		// reason for it to exist if we're here.   This is because or direct or indirect caller is
-		// currently always ExecUntil(), which doesn't need the timer while its running except to
-		// support timed subroutines.  UPDATE: The above is faulty; Must also check g_nLayersNeedingTimer
-		// because our caller can be one that still needs a timer as proven by this script that
-		// hangs otherwise:
-		//SetTimer, Test, on 
-		//Sleep, 1000 
-		//msgbox, done
-		//return
-		//Test: 
-		//SetTimer, Test, off 
-		//return
+	// Above: If there are now no enabled timed subroutines, kill the main timer since there's no other
+	// reason for it to exist if we're here.   This is because or direct or indirect caller is
+	// currently always ExecUntil(), which doesn't need the timer while its running except to
+	// support timed subroutines.  UPDATE: The above is faulty; Must also check g_nLayersNeedingTimer
+	// because our caller can be one that still needs a timer as proven by this script that
+	// hangs otherwise:
+	//SetTimer, Test, on 
+	//Sleep, 1000 
+	//msgbox, done
+	//return
+	//Test: 
+	//SetTimer, Test, off 
+	//return
 }
 
 
 
 ResultType Script::UpdateOrCreateTimer(IObject *aLabel, LPTSTR aPeriod, LPTSTR aPriority, bool aEnable
 	, bool aUpdatePriorityOnly)
-	// Caller should specific a blank aPeriod to prevent the timer's period from being changed
-	// (i.e. if caller just wants to turn on or off an existing timer).  But if it does this
-	// for a non-existent timer, that timer will be created with the default period as specified in
-	// the constructor.
+// Caller should specific a blank aPeriod to prevent the timer's period from being changed
+// (i.e. if caller just wants to turn on or off an existing timer).  But if it does this
+// for a non-existent timer, that timer will be created with the default period as specified in
+// the constructor.
 {
 	ScriptTimer *timer;
 	for (timer = mFirstTimer; timer != NULL; timer = timer->mNextTimer)
@@ -4038,7 +3556,7 @@ ResultType Script::UpdateOrCreateTimer(IObject *aLabel, LPTSTR aPeriod, LPTSTR a
 	bool timer_existed = (timer != NULL);
 	if (!timer_existed)  // Create it.
 	{
-		if (!(timer = new ScriptTimer(aLabel)))
+		if (   !(timer = new ScriptTimer(aLabel))   )
 			return ScriptError(ERR_OUTOFMEM);
 		if (!mFirstTimer)
 			mFirstTimer = mLastTimer = timer;
@@ -4091,7 +3609,7 @@ ResultType Script::UpdateOrCreateTimer(IObject *aLabel, LPTSTR aPeriod, LPTSTR a
 		// Instead, we want it to occur only when the full 5 seconds have elapsed:
 		timer->mTimeLastRun = GetTickCount();
 
-	// Below is obsolete, see above for why:
+    // Below is obsolete, see above for why:
 	// We don't have to kill or set the main timer because the only way this function is called
 	// is directly from the execution of a script line inside ExecUntil(), in which case:
 	// 1) KILL_MAIN_TIMER is never needed because the timer shouldn't exist while in ExecUntil().
@@ -4111,11 +3629,11 @@ void Script::DeleteTimer(IObject *aLabel)
 			// Disable it, even if it's not technically being deleted yet.
 			if (timer->mEnabled)
 				timer->Disable(); // Keeps track of mTimerEnabledCount and whether the main timer is needed.
-			if (timer->mExistingThreads) // This condition differs from g->CurrentTimer == timer, which only detects the "top-most" timer.
+			if (timer->mExistingThreads)
 			{
 				if (!aLabel) // Caller requested we delete a previously marked timer which
 					continue; // has now finished, but this one hasn't, so keep looking.
-							  // In this case we can't delete the timer yet, so mark it for later deletion.
+				// In this case we can't delete the timer yet, so mark it for later deletion.
 				timer->mLabel = NULL;
 				// Clearing mLabel:
 				//  1) Marks the timer to be deleted after its last thread finishes.
@@ -4159,26 +3677,13 @@ Label *Script::FindLabel(LPTSTR aLabelName)
 IObject *Script::FindCallable(LPTSTR aLabelName, Var *aVar, int aParamCount)
 {
 	if (aVar && aVar->HasObject())
-	{
-		IObject *obj = aVar->Object();
-		if (Func *func = LabelPtr(obj).ToFunc())
-		{
-			// It seems worth performing this additional check; without it, registration
-			// of this function would appear to succeed but it would never be called.
-			// In particular, this will alert the user that a *method* is not a valid
-			// callable object (because it requires at least one parameter: "this").
-			// For simplicity, the error message will indicate that no label was found.
-			if (func->mMinParams > aParamCount)
-				return NULL;
-		}
-		return obj;
-	}
+		return aVar->Object();
 	if (*aLabelName)
 	{
 		if (Label *label = FindLabel(aLabelName))
 			return label;
 		if (Func *func = FindFunc(aLabelName))
-			if (func->mMinParams <= aParamCount) // See comments above.
+			if (func->mMinParams <= aParamCount)
 				return func;
 	}
 	return NULL;
@@ -4192,11 +3697,11 @@ ResultType Script::AddLabel(LPTSTR aLabelName, bool aAllowDupe)
 	if (!*aLabelName)
 		return FAIL; // For now, silent failure because callers should check this beforehand.
 	if (!aAllowDupe && FindLabel(aLabelName)) // Relies on short-circuit boolean order.
-											  // Don't attempt to dereference "duplicate_label->mJumpToLine because it might not
-											  // exist yet.  Example:
-											  // label1:
-											  // label1:  <-- This would be a dupe-error but it doesn't yet have an mJumpToLine.
-											  // return
+		// Don't attempt to dereference "duplicate_label->mJumpToLine because it might not
+		// exist yet.  Example:
+		// label1:
+		// label1:  <-- This would be a dupe-error but it doesn't yet have an mJumpToLine.
+		// return
 		return ScriptError(_T("Duplicate label."), aLabelName);
 	LPTSTR new_name = SimpleHeap::Malloc(aLabelName);
 	if (!new_name)
@@ -4220,10 +3725,10 @@ ResultType Script::AddLabel(LPTSTR aLabelName, bool aAllowDupe)
 
 ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType, ActionTypeType aOldActionType
 	, LPTSTR aActionName, LPTSTR aEndMarker, LPTSTR aLiteralMap, size_t aLiteralMapLength)
-	// Returns OK or FAIL.
-	// aLineText needs to be a string whose contents are modifiable (though the string won't be made any
-	// longer than it is now, so it doesn't have to be of size LINE_SIZE). This helps performance by
-	// allowing the string to be split into sections without having to make temporary copies.
+// Returns OK or FAIL.
+// aLineText needs to be a string whose contents are modifiable (though the string won't be made any
+// longer than it is now, so it doesn't have to be of size LINE_SIZE). This helps performance by
+// allowing the string to be split into sections without having to make temporary copies.
 {
 #ifdef _DEBUG
 	if (!aLineText || !*aLineText)
@@ -4378,8 +3883,8 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 					if (var)
 						return ScriptError(var->IsDeclared() ? ERR_DUPLICATE_DECLARATION : _T("Declaration conflicts with existing var."), item);
 				}
-
-				if (!(var = FindOrAddVar(item, var_name_length, declare_type)))
+				
+				if (   !(var = FindOrAddVar(item, var_name_length, declare_type))   )
 					return FAIL; // It already displayed the error.
 				if (var->Type() != VAR_NORMAL || !tcslicmp(item, _T("ErrorLevel"), var_name_length)) // Shouldn't be declared either way (global or local).
 					return ScriptError(_T("Built-in variables must not be declared."), item);
@@ -4400,7 +3905,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 
 				LPTSTR the_operator = item_end;
 				bool convert_the_operator;
-				switch (*item_end)
+				switch(*item_end)
 				{
 				case ',':  // No initializer is present for this variable, so move on to the next one.
 					item = omit_leading_whitespace(item_end + 1); // Set "item" for use by the next iteration.
@@ -4439,26 +3944,26 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 				// are inside parentheses (chiefly those of function-calls, but possibly others).
 
 				item_end += FindNextDelimiter(item_end); // FIND THE NEXT "REAL" COMMA (or the end of the string).
-
-														 // Above has now found the final comma of this sub-statement (or the terminator if there is no comma).
-				LPTSTR terminate_here = omit_trailing_whitespace(item, item_end - 1) + 1; // v1.0.47.02: Fix the fact that "x=5 , y=6" would preserve the whitespace at the end of "5".  It also fixes wrongly showing a syntax error for things like: static d="xyz"  , e = 5
+				
+				// Above has now found the final comma of this sub-statement (or the terminator if there is no comma).
+				LPTSTR terminate_here = omit_trailing_whitespace(item, item_end-1) + 1; // v1.0.47.02: Fix the fact that "x=5 , y=6" would preserve the whitespace at the end of "5".  It also fixes wrongly showing a syntax error for things like: static d="xyz"  , e = 5
 				TCHAR orig_char = *terminate_here;
 				*terminate_here = '\0'; // Temporarily terminate (it might already be the terminator, but that's harmless).
 
-										// PERFORMANCE: As of v1.0.48 (with cached binary numbers and pre-postfixed expressions),
-										// assignments of literal integers to variables are up to 10% slower when done as a combined
-										// (comma-separated) expression rather than each as a separate line.  However,  this slowness
-										// eventually disappears and may even reverse as more and more such expressions are combined
-										// into a single expression (e.g. the following is almost the same speed either way:
-										// x:=1,y:=22,z:=333,a:=4444,b:=55555).  By contrast, assigning a literal string, another
-										// variable, or a complex expression is the opposite: they are always faster when done via
-										// commas, and they continue to get faster and faster as more expressions are merged into a
-										// single comma-separated expression. In light of this, a future version could combine ONLY
-										// those declarations that have initializers into a single comma-separately expression rather
-										// than making a separate expression for each.  However, since it's not always faster to do
-										// so (e.g. x:=0,y:=1 is faster as separate statements), and since it is somewhat rare to
-										// have a long chain of initializers, and since these performance differences are documented,
-										// it might not be worth changing.
+				// PERFORMANCE: As of v1.0.48 (with cached binary numbers and pre-postfixed expressions),
+				// assignments of literal integers to variables are up to 10% slower when done as a combined
+				// (comma-separated) expression rather than each as a separate line.  However,  this slowness
+				// eventually disappears and may even reverse as more and more such expressions are combined
+				// into a single expression (e.g. the following is almost the same speed either way:
+				// x:=1,y:=22,z:=333,a:=4444,b:=55555).  By contrast, assigning a literal string, another
+				// variable, or a complex expression is the opposite: they are always faster when done via
+				// commas, and they continue to get faster and faster as more expressions are merged into a
+				// single comma-separated expression. In light of this, a future version could combine ONLY
+				// those declarations that have initializers into a single comma-separately expression rather
+				// than making a separate expression for each.  However, since it's not always faster to do
+				// so (e.g. x:=0,y:=1 is faster as separate statements), and since it is somewhat rare to
+				// have a long chain of initializers, and since these performance differences are documented,
+				// it might not be worth changing.
 				LPTSTR line_to_add;
 				TCHAR new_buf[LINE_SIZE]; // Declared outside the braces below so that it stays in scope long enough. Using so much stack space here and in caller seems unlikely to affect performance, so _alloca seems unlikely to help.
 				if (convert_the_operator) // Convert first '=' in item to be ":=".
@@ -4494,7 +3999,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 				}
 
 				*terminate_here = orig_char; // Undo the temporary termination.
-											 // Set "item" for use by the next iteration:
+				// Set "item" for use by the next iteration:
 				item = (*item_end == ',') // i.e. it's not the terminator and thus not the final item in the list.
 					? omit_leading_whitespace(item_end + 1)
 					: item_end; // It's the terminator, so let the loop detect that to finish.
@@ -4505,11 +4010,11 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			return OK;
 		} // single-iteration for-loop
 
-		  // Since above didn't return, it's not a declaration such as "global MyVar".
-		if (!(end_marker = ParseActionType(action_name, aLineText, true)))
+		// Since above didn't return, it's not a declaration such as "global MyVar".
+		if (   !(end_marker = ParseActionType(action_name, aLineText, true))   )
 			return FAIL; // It already displayed the error.
 	}
-
+	
 	// Above has ensured that end_marker is the address of the last character of the action name,
 	// or NULL if there is no action name.
 	// Find the arguments (not to be confused with exec_params) of this action, if it has any:
@@ -4552,8 +4057,8 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			// Detect all types of IF-statements.
 			/////////////////////////////////////
 			LPTSTR operation, next_word;
-			if (*action_args == '(' // i.e. if (expression)
-				|| *action_args == g_DerefChar && IS_SPACE_OR_TAB(action_args[1])) // v1.0.48.04: "if % expr" is always an expressions. This check was added to allow lines like "if % IniWinCount = b" to work rather than being misinterpreted as "if var in", "if var is", and possibly other things.  However, "if %var%..." is NOT always an expression because it might be something like: if %A_Index%Array <> unquoted_literal_string
+			if (   *action_args == '(' // i.e. if (expression)
+				|| *action_args == g_DerefChar && IS_SPACE_OR_TAB(action_args[1])   ) // v1.0.48.04: "if % expr" is always an expressions. This check was added to allow lines like "if % IniWinCount = b" to work rather than being misinterpreted as "if var in", "if var is", and possibly other things.  However, "if %var%..." is NOT always an expression because it might be something like: if %A_Index%Array <> unquoted_literal_string
 			{
 				// To support things like the following, the outermost enclosing parentheses are not removed:
 				// if (x < 3) or (x > 6)
@@ -4566,16 +4071,16 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			{
 				// Skip over the variable name so that the "is" and "is not" operators are properly supported:
 				DEFINE_END_FLAGS
-					if (operation = StrChrAny(action_args, end_flags))
-						operation = omit_leading_whitespace(operation);
-					else
-						operation = action_args + _tcslen(action_args); // Point it to the NULL terminator instead.
+				if (operation = StrChrAny(action_args, end_flags))
+					operation = omit_leading_whitespace(operation);
+				else
+					operation = action_args + _tcslen(action_args); // Point it to the NULL terminator instead.
 
-																		// v1.0.42: Fix "If not Installed" not be seen as "If var-named-'not' in MatchList", being
-																		// careful not to break "If NotInstalled in MatchList".  The following are also fixed in
-																		// a similar way:
-																		// If not BetweenXXX
-																		// If not ContainsXXX
+				// v1.0.42: Fix "If not Installed" not be seen as "If var-named-'not' in MatchList", being
+				// careful not to break "If NotInstalled in MatchList".  The following are also fixed in
+				// a similar way:
+				// If not BetweenXXX
+				// If not ContainsXXX
 				bool first_word_is_not = !_tcsnicmp(action_args, _T("Not"), 3) && _tcschr(end_flags, action_args[3]);
 
 				switch (*operation)
@@ -4584,10 +4089,10 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 					aActionType = ACT_IFEQUAL;
 					break;
 				case '<':
-					switch (operation[1])
+					switch(operation[1])
 					{
-						// Note: User can use whitespace to differentiate a literal symbol from
-						// part of an operator, e.g. if var1 < =  <--- char is literal
+					// Note: User can use whitespace to differentiate a literal symbol from
+					// part of an operator, e.g. if var1 < =  <--- char is literal
 					case '=':
 						aActionType = ACT_IFLESSOREQUAL;
 						operation[1] = ' ';
@@ -4737,7 +4242,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 					// and the small avoidance of ambiguity didn't seem worth the cost in terms of readability.
 					for (next_word = operation;;)
 					{
-						if (!(next_word = tcscasestr(next_word, _T("and"))))
+						if (   !(next_word = tcscasestr(next_word, _T("and")))   )
 							return ScriptError(_T("BETWEEN requires the word AND."), aLineText); // Seems too rare a thing to warrant falling back to ACT_IFEXPR for this.
 						if (_tcschr(_T(" \t"), *(next_word - 1)) && _tcschr(_T(" \t"), *(next_word + 3)))
 						{
@@ -4772,7 +4277,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			TCHAR action_args_2nd_char = action_args[1];
 			bool convert_pre_inc_or_dec = false; // Set default.
 
-			switch (*action_args)
+			switch(*action_args)
 			{
 			case '=': // i.e. var=value (old-style assignment)
 				aActionType = ACT_ASSIGN;
@@ -4816,8 +4321,8 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 				if (action_args_2nd_char == '=') // i.e. .= and |= and &= and ^=
 					aActionType = ACT_EXPRESSION; // Mark this line as a stand-alone expression.
 				break;
-				//case '?': Stand-alone ternary such as true ? fn1() : fn2().  These are rare so are
-				// checked later, only after action_name has been checked to see if it's a valid command.
+			//case '?': Stand-alone ternary such as true ? fn1() : fn2().  These are rare so are
+			// checked later, only after action_name has been checked to see if it's a valid command.
 			case '>':
 			case '<':
 				if (action_args_2nd_char == *action_args && action_args[2] == '=') // i.e. >>= and <<=
@@ -4847,8 +4352,8 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 						if (*cp == '[' || !*cp // x.y[z] or x.y
 							|| cp[1] == '=' && _tcschr(_T(":+-*/|&^."), cp[0]) // Two-char assignment operator.
 							|| cp[1] == cp[0]
-							&& (_tcschr(_T("/<>"), cp[0]) && cp[2] == '=' // //=, <<= or >>=
-								|| *cp == '+' || *cp == '-')) // x.y++ or x.y--
+								&& (   _tcschr(_T("/<>"), cp[0]) && cp[2] == '=' // //=, <<= or >>=
+									|| *cp == '+' || *cp == '-'   )) // x.y++ or x.y--
 						{	// Allow Set and bracketed Get as standalone expression.
 							aActionType = ACT_EXPRESSION;
 							break;
@@ -4860,7 +4365,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 					}
 				}
 				break;
-				//default: Leave aActionType set to ACT_INVALID. This also covers case '\0' in case that's possible.
+			//default: Leave aActionType set to ACT_INVALID. This also covers case '\0' in case that's possible.
 			} // switch()
 
 			if (aActionType) // An assignment or other type of action was discovered above.
@@ -4882,7 +4387,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 						// Since action_args is just a pointer into the aLineText buffer (which caller has ensured
 						// is modifiable), use memmove() so that overlapping source & dest are properly handled:
 						tmemmove(aLineText, action_args, new_length + 1); // +1 to include the zero terminator.
-																		  // Append the second param, which is just "1" since the ++ and -- only inc/dec by 1:
+						// Append the second param, which is just "1" since the ++ and -- only inc/dec by 1:
 						aLineText[new_length++] = g_delimiter;
 						aLineText[new_length++] = '1';
 						aLineText[new_length] = '\0';
@@ -4918,7 +4423,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 								cp = omit_leading_whitespace(cp + 1);
 								if (StrChrAny(cp, EXPR_ALL_SYMBOLS)) // Don't need strstr(cp, " ?") because the search already looks for ':'.
 									aActionType = ACT_EXPRESSION; // It's clearly an expression not a word like Days or %VarContainingTheWordDays%.
-																  //else it's probably date/time math, so leave it as-is.
+								//else it's probably date/time math, so leave it as-is.
 							}
 							else // ACT_ASSIGNEXPR/MULT/DIV, for which any non-function comma qualifies it as multi-statement.
 								aActionType = ACT_EXPRESSION;
@@ -4947,7 +4452,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 	// If action_args now starts with a delimiter, it means that the first param is blank/empty.
 
 	if (!aActionType && could_be_named_action && !aOldActionType) // Caller nor logic above has yet determined the action.
-		if (!(aActionType = ConvertActionType(action_name))) // Is this line a command?
+		if (   !(aActionType = ConvertActionType(action_name))   ) // Is this line a command?
 			aOldActionType = ConvertOldActionType(action_name);    // If not, is it an old-command?
 
 	if (!aActionType && !aOldActionType) // Didn't find any action or command in this line.
@@ -4993,7 +4498,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 				action_args = aLineText; // Since this is an assignment and/or expression, use the line's full text for later parsing.
 			}
 			else if (*action_args == '?'  // L34: Below no longer requires spaces around '?'.
-				|| (question_mark = _tcschr(action_args, '?')) && _tcschr(question_mark, ':')) // Rough check (see comments below). Relies on short-circuit boolean order.
+				|| (question_mark = _tcschr(action_args,'?')) && _tcschr(question_mark,':')) // Rough check (see comments below). Relies on short-circuit boolean order.
 			{
 				// To avoid hindering load-time error detection such as misspelled command names, allow stand-alone
 				// expressions only for things that can produce a side-effect (currently only ternaries like
@@ -5107,13 +4612,13 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			switch (c)
 			{
 				// Only lowercase is recognized for these:
-			case 'a': action_args[i + 1] = '\a'; break;  // alert (bell) character
-			case 'b': action_args[i + 1] = '\b'; break;  // backspace
-			case 'f': action_args[i + 1] = '\f'; break;  // formfeed
-			case 'n': action_args[i + 1] = '\n'; break;  // newline
-			case 'r': action_args[i + 1] = '\r'; break;  // carriage return
-			case 't': action_args[i + 1] = '\t'; break;  // horizontal tab
-			case 'v': action_args[i + 1] = '\v'; break;  // vertical tab
+				case 'a': action_args[i + 1] = '\a'; break;  // alert (bell) character
+				case 'b': action_args[i + 1] = '\b'; break;  // backspace
+				case 'f': action_args[i + 1] = '\f'; break;  // formfeed
+				case 'n': action_args[i + 1] = '\n'; break;  // newline
+				case 'r': action_args[i + 1] = '\r'; break;  // carriage return
+				case 't': action_args[i + 1] = '\t'; break;  // horizontal tab
+				case 'v': action_args[i + 1] = '\v'; break;  // vertical tab
 			}
 			// Replace escape-sequence with its single-char value.  This is done event if the pair isn't
 			// a recognizable escape sequence (e.g. `? becomes ?), which is the Microsoft approach
@@ -5153,7 +4658,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			while (IS_SPACE_OR_TAB(action_args[mark]))
 				mark++; // ...and any leading whitespace.
 
-			if (action_args[mark] == g_DerefChar && !literal_map[mark] && IS_SPACE_OR_TAB(action_args[mark + 1]))
+			if (action_args[mark] == g_DerefChar && !literal_map[mark] && IS_SPACE_OR_TAB(action_args[mark+1]))
 			{
 				// Since this parameter is an expression, commas inside it can't be intended to be
 				// literal/displayed by the user unless they're enclosed in quotes; but in that case,
@@ -5162,10 +4667,10 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 				if (arg >= 3) // Text or Timeout
 					break;
 				// Otherwise, just jump to the next parameter so we can check it too:
-				next = FindNextDelimiter(action_args, g_delimiter, mark + 2, literal_map);
+				next = FindNextDelimiter(action_args, g_delimiter, mark+2, literal_map);
 				continue;
 			}
-
+			
 			// Find the next non-literal delimiter:
 			for (next = mark; action_args[next]; ++next)
 				if (action_args[next] == g_delimiter && !literal_map[next])
@@ -5175,13 +4680,13 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			{
 				if (!action_args[next]) // Below relies on this check.
 					break; // There's only one parameter, so no further checks are required.
-						   // It has more than one apparent param, but is the first param even numeric?
+				// It has more than one apparent param, but is the first param even numeric?
 				action_args[next] = '\0'; // Temporarily terminate action_args at the first delimiter.
-										  // Note: If it's a number inside a variable reference, it's still considered 1-parameter
-										  // mode to avoid ambiguity (unlike the deref check for param #4 in the section below,
-										  // there seems to be too much ambiguity in this case to justify trying to figure out
-										  // if the first parameter is a pure deref, and thus that the command should use
-										  // 3-param or 4-param mode instead).
+				// Note: If it's a number inside a variable reference, it's still considered 1-parameter
+				// mode to avoid ambiguity (unlike the deref check for param #4 in the section below,
+				// there seems to be too much ambiguity in this case to justify trying to figure out
+				// if the first parameter is a pure deref, and thus that the command should use
+				// 3-param or 4-param mode instead).
 				if (!IsPureNumeric(action_args + mark)) // No floats allowed.
 					max_params_override = 1;
 				action_args[next] = g_delimiter; // Restore the string.
@@ -5268,7 +4773,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			case ACT_IFWINNOTACTIVE:
 				subaction_start = action_args + mark;
 				if (subaction_end_marker = ParseActionType(subaction_name, subaction_start, false))
-					if (!(subaction_type = ConvertActionType(subaction_name)))
+					if (   !(subaction_type = ConvertActionType(subaction_name))   )
 						suboldaction_type = ConvertOldActionType(subaction_name);
 				break;
 			}
@@ -5306,16 +4811,16 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 				// reference.  That is why TRANS_CMD_INVALID does not produce an error at this stage,
 				// but only later when the line has been constructed far enough to call ArgHasDeref():
 				// i.e. Not the first param, only the third and fourth, which currently are either both numeric or both non-numeric for all cases.
-				switch (Line::ConvertTransformCmd(arg[1])) // arg[1] is the second arg.
+				switch(Line::ConvertTransformCmd(arg[1])) // arg[1] is the second arg.
 				{
-					// See comment above for why TRANS_CMD_INVALID isn't yet reported as an error:
+				// See comment above for why TRANS_CMD_INVALID isn't yet reported as an error:
 #ifdef UNICODE
-#define TRANS_CMD_UNICODE_CASES
+				#define TRANS_CMD_UNICODE_CASES
 #else
-#define TRANS_CMD_UNICODE_CASES \
+				#define TRANS_CMD_UNICODE_CASES \
 				case TRANS_CMD_UNICODE:
 #endif
-#define TRANSFORM_NON_EXPRESSION_CASES \
+				#define TRANSFORM_NON_EXPRESSION_CASES \
 				case TRANS_CMD_INVALID:\
 				case TRANS_CMD_ASC:\
 				TRANS_CMD_UNICODE_CASES\
@@ -5323,7 +4828,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 				case TRANS_CMD_HTML:\
 					break; // Do nothing.  Leave is_expression set to its default of false.
 
-					TRANSFORM_NON_EXPRESSION_CASES
+				TRANSFORM_NON_EXPRESSION_CASES
 				default:
 					// For all other sub-commands, Arg #3 and #4 are expression-capable.  It doesn't
 					// seem necessary to call LegacyArgIsExpression() because is_expression is only
@@ -5352,7 +4857,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			}
 		} // if (!is_expression)
 
-		  // Find the end of the above arg:
+		// Find the end of the above arg:
 		if (is_expression)
 			// Find the next delimiter, taking into account quote marks, parentheses, etc.
 			mark = FindNextDelimiter(action_args, g_delimiter, mark, literal_map);
@@ -5365,12 +4870,12 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 		if (action_args[mark])  // A non-literal delimiter was found.
 		{
 			action_args[mark] = '\0';  // Terminate the previous arg.
-									   // Trim any whitespace from the previous arg.  This operation will not alter the contents
-									   // of anything beyond action_args[i], so it should be safe.  In addition, even though it
-									   // changes the contents of the arg[nArgs] substring, we don't have to update literal_map
-									   // because the map is still accurate due to the nature of rtrim).  UPDATE: Note that this
-									   // version of rtrim() specifically avoids trimming newline characters, since the user may
-									   // have included literal newlines at the end of the string by using an escape sequence:
+			// Trim any whitespace from the previous arg.  This operation will not alter the contents
+			// of anything beyond action_args[i], so it should be safe.  In addition, even though it
+			// changes the contents of the arg[nArgs] substring, we don't have to update literal_map
+			// because the map is still accurate due to the nature of rtrim).  UPDATE: Note that this
+			// version of rtrim() specifically avoids trimming newline characters, since the user may
+			// have included literal newlines at the end of the string by using an escape sequence:
 			rtrim_literal(arg[nArgs], arg_map[nArgs]);
 			// Omit the leading whitespace from the next arg:
 			for (++mark; IS_SPACE_OR_TAB(action_args[mark]) && !literal_map[mark]; ++mark);
@@ -5405,7 +4910,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 	////////////////////////////////////////////////////////////////////////
 	if (aOldActionType)
 	{
-		switch (aOldActionType)
+		switch(aOldActionType)
 		{
 		case OLD_WINGETACTIVETITLE:
 			arg[nArgs] = _T("A");  arg_map[nArgs] = NULL; // "A" signifies the active window.
@@ -5441,7 +4946,7 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 		case OLD_ENVDIV:
 			return AddLine(ACT_DIV, arg, nArgs, arg_map);
 
-			// For these, break rather than return so that further processing can be done:
+		// For these, break rather than return so that further processing can be done:
 		case OLD_IFEQUAL:
 			aActionType = ACT_IFEQUAL;
 			break;
@@ -5481,14 +4986,14 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 			if (action_args[mark] == g_delimiter && !literal_map[mark])  // Match found: a non-literal delimiter.
 			{
 				delimiter = action_args + mark; // save the location of this delimiter
-												// Omit the leading whitespace from the next arg:
+				// Omit the leading whitespace from the next arg:
 				for (++mark; IS_SPACE_OR_TAB(action_args[mark]); ++mark);
 				// Now <mark> marks the end of the string, the start of the next arg,
 				// or a delimiter-char (if the next arg is blank).
 				subaction_start = action_args + mark;
 				if (subaction_end_marker = ParseActionType(subaction_name, subaction_start, false))
 				{
-					if (!(subaction_type = ConvertActionType(subaction_name)))
+					if (   !(subaction_type = ConvertActionType(subaction_name))   )
 						suboldaction_type = ConvertOldActionType(subaction_name);
 					if (subaction_type || suboldaction_type) // A valid sub-action (command) was found.
 					{
@@ -5514,23 +5019,23 @@ ResultType Script::ParseAndAddLine(LPTSTR aLineText, ActionTypeType aActionType,
 		|| ((aActionType == ACT_FOR || aActionType == ACT_CATCH) && nArgs))
 	{
 		LPTSTR arg1 = arg[nArgs - 1]; // For readability and possibly performance.
-									  // A loop with the above criteria (exactly one arg) can only validly be a normal/counting loop or
-									  // a file-pattern loop if its parameter's last character is '{'.  For the following reasons, any
-									  // single-parameter loop that ends in '{' is considered to be one-true brace:
-									  // 1) Extremely rare that a file-pattern loop such as "Loop filename {" would ever be used,
-									  //    and even if it is, the syntax checker will report an unclosed block, making it apparent
-									  //    to the user that a workaround is needed, such as putting the filename into a variable first.
-									  // 2) Difficulty and code size of distinguishing all possible valid-one-true-braces from those
-									  //    that aren't.  For example, the following are ambiguous, so it seems best for consistency
-									  //    and code size reduction just to treat them as one-truce-brace, which will immediately alert
-									  //    the user if the brace isn't closed:
-									  //    a) Loop % (expression) {   ; Ambiguous because expression could resolve to a string, thus it would be seen as a file-pattern loop.
-									  //    b) Loop %Var% {            ; Similar as above, which means all three of these unintentionally support
-									  //    c) Loop filename{          ; OTB for some types of file loops because it's not worth the code size to "unsupport" them.
-									  //    d) Loop *.txt {            ; Like the above: Unintentionally supported, but not documented.
-									  //    e) (While-loops are also checked here now)
-									  // Insist that no characters follow the '{' in case the user intended it to be a file-pattern loop
-									  // such as "Loop {literal-filename".
+		// A loop with the above criteria (exactly one arg) can only validly be a normal/counting loop or
+		// a file-pattern loop if its parameter's last character is '{'.  For the following reasons, any
+		// single-parameter loop that ends in '{' is considered to be one-true brace:
+		// 1) Extremely rare that a file-pattern loop such as "Loop filename {" would ever be used,
+		//    and even if it is, the syntax checker will report an unclosed block, making it apparent
+		//    to the user that a workaround is needed, such as putting the filename into a variable first.
+		// 2) Difficulty and code size of distinguishing all possible valid-one-true-braces from those
+		//    that aren't.  For example, the following are ambiguous, so it seems best for consistency
+		//    and code size reduction just to treat them as one-truce-brace, which will immediately alert
+		//    the user if the brace isn't closed:
+		//    a) Loop % (expression) {   ; Ambiguous because expression could resolve to a string, thus it would be seen as a file-pattern loop.
+		//    b) Loop %Var% {            ; Similar as above, which means all three of these unintentionally support
+		//    c) Loop filename{          ; OTB for some types of file loops because it's not worth the code size to "unsupport" them.
+		//    d) Loop *.txt {            ; Like the above: Unintentionally supported, but not documented.
+		//    e) (While-loops are also checked here now)
+		// Insist that no characters follow the '{' in case the user intended it to be a file-pattern loop
+		// such as "Loop {literal-filename".
 		LPTSTR arg1_last_char = arg1 + _tcslen(arg1) - 1;
 		if (*arg1_last_char == '{')
 		{
@@ -5580,7 +5085,7 @@ inline LPTSTR Script::ParseActionType(LPTSTR aBufTarget, LPTSTR aBufSource, bool
 	// so that assignments and IFs without whitespace are supported, e.g. var1=5,
 	// if var2<%var3%.  Not static in case g_delimiter is allowed to vary:
 	DEFINE_END_FLAGS
-		LPTSTR end_marker = StrChrAny(aBufSource, end_flags);
+	LPTSTR end_marker = StrChrAny(aBufSource, end_flags);
 	if (end_marker) // Found a delimiter.
 	{
 		if (end_marker > aBufSource) // The delimiter isn't very first char in aBufSource.
@@ -5613,7 +5118,7 @@ inline ActionTypeType Script::ConvertActionType(LPTSTR aActionTypeString)
 	// For the loop's index:
 	// Use an int rather than ActionTypeType since it's sure to be large enough to go beyond
 	// 256 if there happen to be exactly 256 actions in the array:
-	for (int action_type = ACT_FIRST_COMMAND; action_type < g_ActionCount; ++action_type)
+ 	for (int action_type = ACT_FIRST_COMMAND; action_type < g_ActionCount; ++action_type)
 		if (!_tcsicmp(aActionTypeString, g_act[action_type].Name)) // Match found.
 			return action_type;
 	return ACT_INVALID;  // On failure to find a match.
@@ -5624,7 +5129,7 @@ inline ActionTypeType Script::ConvertActionType(LPTSTR aActionTypeString)
 inline ActionTypeType Script::ConvertOldActionType(LPTSTR aActionTypeString)
 // inline since it's called so often, but don't keep it in the .h due to #include issues.
 {
-	for (int action_type = OLD_INVALID + 1; action_type < g_OldActionCount; ++action_type)
+ 	for (int action_type = OLD_INVALID + 1; action_type < g_OldActionCount; ++action_type)
 		if (!_tcsicmp(aActionTypeString, g_old_act[action_type].Name)) // Match found.
 			return action_type;
 	return OLD_INVALID;  // On failure to find a match.
@@ -5651,10 +5156,10 @@ bool LegacyArgIsExpression(LPTSTR aArgText, LPTSTR aArgMap)
 		|| !aArgMap || *(aArgMap + (cp != aArgText)) // There's no literal-map or this deref char is not really a deref char because it's marked as a literal.
 		|| !(cp = _tcschr(cp + 1, g_DerefChar)) // There is no next deref char.
 		|| (cp[1] && !IsPureNumeric(cp + 1, false, true, true)); // But that next deref char is not the last char, which means this is not a single isolated deref. v1.0.29: Allow things like Sleep %Var%000.
-																 // Above does not need to check whether last deref char is marked literal in the
-																 // arg map because if it is, it would mean the first deref char lacks a matching
-																 // close-symbol, which will be caught as a syntax error below regardless of whether
-																 // this is an expression.
+		// Above does not need to check whether last deref char is marked literal in the
+		// arg map because if it is, it would mean the first deref char lacks a matching
+		// close-symbol, which will be caught as a syntax error below regardless of whether
+		// this is an expression.
 }
 
 
@@ -5700,7 +5205,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		new_arg = NULL;  // Just need an empty array in this case.
 	else
 	{
-		if (!(new_arg = (ArgStruct *)SimpleHeap::Malloc(aArgc * sizeof(ArgStruct))))
+		if (   !(new_arg = (ArgStruct *)SimpleHeap::Malloc(aArgc * sizeof(ArgStruct)))   )
 			return ScriptError(ERR_OUTOFMEM);
 
 		int i, j, i_plus_one;
@@ -5718,17 +5223,17 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			if (aActionType == ACT_TRANSFORM)
 			{
 				if (i == 1) // The second parameter (since the first is the OutputVar).
-							// Note that the following might return TRANS_CMD_INVALID just because the sub-command
-							// is contained in a variable reference.  That is why TRANS_CMD_INVALID does not
-							// produce an error at this stage, but only later when the line has been constructed
-							// far enough to call ArgHasDeref():
+					// Note that the following might return TRANS_CMD_INVALID just because the sub-command
+					// is contained in a variable reference.  That is why TRANS_CMD_INVALID does not
+					// produce an error at this stage, but only later when the line has been constructed
+					// far enough to call ArgHasDeref():
 					trans_cmd = Line::ConvertTransformCmd(this_aArg);
-				// The value of trans_cmd is also used by the syntax checker further below.
+					// The value of trans_cmd is also used by the syntax checker further below.
 				else if (i > 1) // i.e. Not the first param, only the third and fourth, which currently are either both numeric or both non-numeric for all cases.
 				{
-					switch (trans_cmd)
+					switch(trans_cmd)
 					{
-						TRANSFORM_NON_EXPRESSION_CASES
+					TRANSFORM_NON_EXPRESSION_CASES
 					default:
 						// For all other sub-commands, Arg #3 and #4 are expression-capable and will be made so
 						// if they pass the following check:
@@ -5741,7 +5246,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			// variable.  If it is, we store it differently (and there's no need to resolve
 			// escape sequences in these cases, since var names can't contain them):
 			if (aActionType == ACT_LOOP && i == 1 && aArg[0] && !_tcsicmp(aArg[0], _T("Parse"))) // Verified.
-																								 // i==1 --> 2nd arg's type is based on 1st arg's text.
+				// i==1 --> 2nd arg's type is based on 1st arg's text.
 				this_new_arg.type = ARG_TYPE_INPUT_VAR;
 			else
 				this_new_arg.type = Line::ArgIsVar(aActionType, i);
@@ -5758,7 +5263,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			{
 				if (this_new_arg.type == ARG_TYPE_OUTPUT_VAR // Command requires a variable, not an expression.
 					|| this_new_arg.type == ARG_TYPE_INPUT_VAR // Exclude NORMAL args from the check below.
-					&& (aActionType == ACT_SORT || ACT_IS_IF(aActionType))) // Sort and If commands depend on arg 0 being a variable.
+						&& (aActionType == ACT_SORT || ACT_IS_IF(aActionType))) // Sort and If commands depend on arg 0 being a variable.
 					return ScriptError(_T("Unexpected %"), this_aArg); // Short message since it's rare.
 				this_new_arg.type = ARG_TYPE_NORMAL; // If this was an input var, make it a normal expression.
 				this_new_arg.is_expression = true;
@@ -5796,10 +5301,10 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 					{
 						// A non-escaped deref symbol wasn't found, therefore this variable does not
 						// appear to be something that must be resolved dynamically at runtime.
-						if (!(target_var = FindOrAddVar(this_aArg)))
+						if (   !(target_var = FindOrAddVar(this_aArg))   )
 							return FAIL;  // The above already displayed the error.
-										  // If this action type is something that modifies the contents of the var, ensure the var
-										  // isn't a special/reserved one:
+						// If this action type is something that modifies the contents of the var, ensure the var
+						// isn't a special/reserved one:
 						if (this_new_arg.type == ARG_TYPE_OUTPUT_VAR && VAR_IS_READONLY(*target_var))
 							return ScriptError(ERR_VAR_IS_READONLY, this_aArg);
 						// Rather than removing this arg from the list altogether -- which would disturb
@@ -5834,18 +5339,18 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			// The length must fit into a WORD, which it will since each arg is literal text from a script's line,
 			// which is limited to LINE_SIZE. The length member was added in v1.0.44.14 to boost runtime performance.
 			this_new_arg.length = (WORD)_tcslen(this_aArg);
-			if (!(this_new_arg.text = SimpleHeap::Malloc(this_aArg, this_new_arg.length)))
+			if (   !(this_new_arg.text = SimpleHeap::Malloc(this_aArg, this_new_arg.length))   )
 				return FAIL;  // It already displayed the error for us.
 
-							  ////////////////////////////////////////////////////
-							  // Build the list of dereferenced vars for this arg.
-							  ////////////////////////////////////////////////////
-							  // Now that any escaped g_DerefChars have been marked, scan new_arg.text to
-							  // determine where the variable dereferences are (if any).  In addition to helping
-							  // runtime performance, this also serves to validate the script at load-time
-							  // so that some errors can be caught early.  Note: this_new_arg.text is scanned rather
-							  // than this_aArg because we want to establish pointers to the correct area of
-							  // memory:
+			////////////////////////////////////////////////////
+			// Build the list of dereferenced vars for this arg.
+			////////////////////////////////////////////////////
+			// Now that any escaped g_DerefChars have been marked, scan new_arg.text to
+			// determine where the variable dereferences are (if any).  In addition to helping
+			// runtime performance, this also serves to validate the script at load-time
+			// so that some errors can be caught early.  Note: this_new_arg.text is scanned rather
+			// than this_aArg because we want to establish pointers to the correct area of
+			// memory:
 			deref_count = 0;  // Init for each arg.
 
 			if (np = g_act[aActionType].NumericParams) // This command has at least one numeric parameter.
@@ -5891,20 +5396,20 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 				} // for each mandatory-numeric arg of this command, see if this arg matches its number.
 			} // this command has a list of mandatory numeric-args.
 
-			  // To help runtime performance, the below changes args to non-expressions if they contain
-			  // only a single numeric literal (or are entirely blank). At runtime, such args are expanded
-			  // normally rather than having to run them through the expression evaluator. Exceptions:
-			  //
-			  //	a)	ACT_FOR requires an expression; it is incapable of accepting a non-expression.
-			  //		Although we could treat things like "For x in 0" as load-time errors, it wouldn't
-			  //		be consistent with "For x in var_containing_num" and the rarity mightn't be worth
-			  //		the added code.
-			  //
-			  //	b)	ACT_ASSIGNEXPR should assign a cached binary integer in addition to the numeric literal.
-			  //		This might perform just as well overall but is more important for consistency, especially
-			  //		with COM objects which would otherwise treat the number as a string, potentially causing
-			  //		a type mismatch error.
-			  //
+			// To help runtime performance, the below changes args to non-expressions if they contain
+			// only a single numeric literal (or are entirely blank). At runtime, such args are expanded
+			// normally rather than having to run them through the expression evaluator. Exceptions:
+			//
+			//	a)	ACT_FOR requires an expression; it is incapable of accepting a non-expression.
+			//		Although we could treat things like "For x in 0" as load-time errors, it wouldn't
+			//		be consistent with "For x in var_containing_num" and the rarity mightn't be worth
+			//		the added code.
+			//
+			//	b)	ACT_ASSIGNEXPR should assign a cached binary integer in addition to the numeric literal.
+			//		This might perform just as well overall but is more important for consistency, especially
+			//		with COM objects which would otherwise treat the number as a string, potentially causing
+			//		a type mismatch error.
+			//
 			if (this_new_arg.is_expression && IsPureNumeric(this_new_arg.text, true, true, true)
 				&& aActionType != ACT_ASSIGNEXPR && aActionType != ACT_FOR && aActionType != ACT_THROW)
 				this_new_arg.is_expression = false;
@@ -5912,7 +5417,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			if (this_new_arg.is_expression)
 			{
 				// L31: There used to be a section of code here for ensuring parentheses are balanced, but that is done in ExpressionToPostfix now.
-#define ERR_EXP_ILLEGAL_CHAR _T("The leftmost character above is illegal in an expression.") // "above" refers to the layout of the error dialog.
+				#define ERR_EXP_ILLEGAL_CHAR _T("The leftmost character above is illegal in an expression.") // "above" refers to the layout of the error dialog.
 				// ParseDerefs() won't consider escaped percent signs to be illegal, but in this case
 				// they should be since they have no meaning in expressions.  UPDATE for v1.0.44.11: The following
 				// is now commented out because it causes false positives (and fixing that probably isn't worth the
@@ -5954,14 +5459,14 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 								++op_end;
 								if (*op_end != '"') // String terminator or some non-quote character.
 									break;  // The previous char is the ending quote.
-											//else a pair of quotes, which resolves to a single literal quote.
-											// This pair is skipped over and the loop continues until the real end-quote is found.
+								//else a pair of quotes, which resolves to a single literal quote.
+								// This pair is skipped over and the loop continues until the real end-quote is found.
 							}
 						}
 						// op_end is now set correctly to allow the outer loop to continue.
 						continue; // Ignore this literal string, letting the runtime expression parser recognize it.
 					}
-
+					
 					// Find the end of this operand (if *op_end is '\0', strchr() will find that too):
 					for (op_end = op_begin + 1; !_tcschr(EXPR_OPERAND_TERMINATORS_EX_DOT, *op_end); ++op_end); // Find first whitespace, operator, or paren.
 					if (*op_end == '=' && op_end[-1] == '.') // v1.0.46.01: Support .=, but not any use of '.' because that is reserved as a struct/member operator.
@@ -6012,30 +5517,30 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 							{
 							case 'a':
 							case 'A':
-								if ((op_begin[1] == 'n' || op_begin[1] == 'N') // Relies on short-circuit boolean order.
-									&& (op_begin[2] == 'd' || op_begin[2] == 'D'))
+								if (   (op_begin[1] == 'n' || op_begin[1] == 'N') // Relies on short-circuit boolean order.
+									&& (op_begin[2] == 'd' || op_begin[2] == 'D')   )
 								{	// "AND" was found.
 									op_begin[0] = '&'; // v1.0.45: Transform into easier-to-parse symbols for
 									op_begin[1] = '&'; // improved runtime performance and reduced code size.  v1.0.48: It no longer helps runtime performance, but it's kept because changing moving it to ExpressionToPostfix() isn't likely to have much benefit.
 									op_begin[2] = ' '; // A space is used lieu of the complexity of the below.
-													   // Above seems better than below even though below would make it look a little
-													   // nicer in ListLines.  BELOW CAN'T WORK because this_new_arg.deref[] can contain
-													   // offsets that would also need to be adjusted:
-													   //memmove(op_begin + 2, op_begin + 3, _tcslen(op_begin+3)+1 ... or some expression involving this_new_arg.length this_new_arg.text);
-													   //--this_new_arg.length;
-													   //--op_end; // Ensure op_end is set up properly for the for-loop's post-iteration action.
+									// Above seems better than below even though below would make it look a little
+									// nicer in ListLines.  BELOW CAN'T WORK because this_new_arg.deref[] can contain
+									// offsets that would also need to be adjusted:
+									//memmove(op_begin + 2, op_begin + 3, _tcslen(op_begin+3)+1 ... or some expression involving this_new_arg.length this_new_arg.text);
+									//--this_new_arg.length;
+									//--op_end; // Ensure op_end is set up properly for the for-loop's post-iteration action.
 									continue;
 								}
 								break;
 
 							case 'n': // v1.0.45: Unlike "AND" and "OR" above, this one is not given a substitute
 							case 'N': // because it's not the same as the "!" operator. See SYM_LOWNOT for comments.
-								if ((op_begin[1] == 'o' || op_begin[1] == 'O') // Relies on short-circuit boolean order.
-									&& (op_begin[2] == 't' || op_begin[2] == 'T'))
+								if (   (op_begin[1] == 'o' || op_begin[1] == 'O') // Relies on short-circuit boolean order.
+									&& (op_begin[2] == 't' || op_begin[2] == 'T')   )
 									continue; // "NOT" was found.
-								if ((op_begin[1] == 'e' || op_begin[1] == 'E')
+								if (   (op_begin[1] == 'e' || op_begin[1] == 'E')
 									&& (op_begin[2] == 'w' || op_begin[2] == 'W')
-									&& IS_SPACE_OR_TAB(op_begin[3]))
+									&& IS_SPACE_OR_TAB(op_begin[3])   )
 								{
 									cp = omit_leading_whitespace(op_begin + 4);
 									// This "new " is a keyword only if followed immediately by an operand,
@@ -6046,7 +5551,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 										// If this is "new ClassVar()", we need to avoid parsing "ClassVar()" as a
 										// function deref.  The check below handles that.  Note that "new X.Y()" is
 										// excluded, since it wouldn't be parsed as a function deref anyway.
-										for (; !_tcschr(EXPR_OPERAND_TERMINATORS, *cp); ++cp); // Find end of var.
+										for ( ; !_tcschr(EXPR_OPERAND_TERMINATORS, *cp); ++cp); // Find end of var.
 										pending_function_is_new_op = (*cp == '(');
 										continue;
 									}
@@ -6056,12 +5561,12 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 						}
 					} // End of check for AND/OR/NOT.
 
-					  // Temporarily terminate, which avoids at least the below issue:
-					  // Two or more extremely long var names together could exceed MAX_VAR_NAME_LENGTH
-					  // e.g. LongVar%LongVar2% would be too long to store in a buffer of size MAX_VAR_NAME_LENGTH.
-					  // This seems pretty darn unlikely, but perhaps doubling it would be okay.
-					  // UPDATE: Above is now not an issue since caller's string is temporarily terminated rather
-					  // than making a copy of it.
+					// Temporarily terminate, which avoids at least the below issue:
+					// Two or more extremely long var names together could exceed MAX_VAR_NAME_LENGTH
+					// e.g. LongVar%LongVar2% would be too long to store in a buffer of size MAX_VAR_NAME_LENGTH.
+					// This seems pretty darn unlikely, but perhaps doubling it would be okay.
+					// UPDATE: Above is now not an issue since caller's string is temporarily terminated rather
+					// than making a copy of it.
 					orig_char = *op_end;
 					*op_end = '\0';
 
@@ -6077,8 +5582,8 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 
 					// Below takes care of recognizing hexadecimal integers, which avoids the 'x' character
 					// inside of something like 0xFF from being detected as the name of a variable:
-					if (!IsPureNumeric(op_begin, true, false, true) // Not a numeric literal...
-						/*&& !(*op_begin == '?' && !op_begin[1])*/) // ...and not an isolated '?' operator.  Relies on short-circuit boolean order.
+					if (   !IsPureNumeric(op_begin, true, false, true) // Not a numeric literal...
+						/*&& !(*op_begin == '?' && !op_begin[1])*/   ) // ...and not an isolated '?' operator.  Relies on short-circuit boolean order.
 					{
 						if (*op_begin == '.') // L31: Check for something like "obj .property" - scientific-notation literals such as ".123e+1" may also be handled here.
 						{
@@ -6094,16 +5599,16 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 						{
 							if (ctoupper(op_end[-1]) == 'E' && (orig_char == '+' || orig_char == '-')) // Listed first for short-circuit performance with the below.
 							{
-								// v1.0.46.11: This item appears to be a scientific-notation literal with the OPTIONAL +/- sign PRESENT on the exponent (e.g. 1.0e+001), so check that before checking if it's a variable name.
+								 // v1.0.46.11: This item appears to be a scientific-notation literal with the OPTIONAL +/- sign PRESENT on the exponent (e.g. 1.0e+001), so check that before checking if it's a variable name.
 								*op_end = orig_char; // Undo the temporary termination.
 								do // Skip over the sign and its exponent; e.g. the "+1" in "1.0e+1".  There must be a sign in this particular sci-notation number or we would never have arrived here.
 									++op_end;
 								while (*op_end >= '0' && *op_end <= '9'); // Avoid isdigit() because it sometimes causes a debug assertion failure at: (unsigned)(c + 1) <= 256 (probably only in debug mode), and maybe only when bad data got in it due to some other bug.
-																		  // No need to do the following because a number can't validly be followed by the ".=" operator:
-																		  //if (*op_end == '=' && op_end[-1] == '.') // v1.0.46.01: Support .=, but not any use of '.' because that is reserved as a struct/member operator.
-																		  //	--op_end;
+								// No need to do the following because a number can't validly be followed by the ".=" operator:
+								//if (*op_end == '=' && op_end[-1] == '.') // v1.0.46.01: Support .=, but not any use of '.' because that is reserved as a struct/member operator.
+								//	--op_end;
 
-																		  // Double-check it really is a floating-point literal with signed exponent.
+								// Double-check it really is a floating-point literal with signed exponent.
 								orig_char = *op_end;
 								*op_end = '\0';
 								if (IsPureNumeric(op_begin, true, false, true))
@@ -6145,32 +5650,32 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 							if (!ParseDerefs(op_begin, this_aArgMap ? this_aArgMap + (op_begin - this_new_arg.text) : NULL
 								, deref, deref_count))
 								return FAIL; // It already displayed the error.  No need to undo temp. termination.
-											 // And now leave this operand "raw" so that it will later be dereferenced again.
-											 // In the following example, i made into a deref but the result (Array33) must be
-											 // dereferenced during a second stage at runtime: if (x = Array%i%).
+							// And now leave this operand "raw" so that it will later be dereferenced again.
+							// In the following example, i made into a deref but the result (Array33) must be
+							// dereferenced during a second stage at runtime: if (x = Array%i%).
 
 							if (is_function) // Dynamic function call.
 								deref[first_deref].param_count = 0; // L31: Parameters are now counted by ExpressionToPostfix instead of here, but this must be initialized.
 						}
 						else // This operand is a variable name or function name (single deref).
 						{
-#define TOO_MANY_REFS _T("Too many var/func refs.") // Short msg since so rare.
+							#define TOO_MANY_REFS _T("Too many var/func refs.") // Short msg since so rare.
 							if (deref_count >= MAX_DEREFS_PER_ARG)
 								return ScriptError(TOO_MANY_REFS, op_begin); // Indicate which operand it ran out of space at.
-																			 // Store the deref's starting location, even for functions (leave it set to the start
-																			 // of the function's name for use when doing error reporting at other stages -- i.e.
-																			 // don't set it to the address of the first param or closing-paren-if-no-params):
+							// Store the deref's starting location, even for functions (leave it set to the start
+							// of the function's name for use when doing error reporting at other stages -- i.e.
+							// don't set it to the address of the first param or closing-paren-if-no-params):
 							deref[deref_count].marker = op_begin;
 							deref[deref_count].length = (DerefLengthType)operand_length;
 							if (deref[deref_count].is_function = is_function) // It's a function not a variable.
-																			  // Set to NULL to catch bugs.  It must and will be filled in at a later stage
-																			  // because the setting of each function's mJumpToLine relies upon the fact that
-																			  // functions are added to the linked list only upon being formally defined
-																			  // so that the most recently defined function is always last in the linked
-																			  // list, awaiting its mJumpToLine that will appear beneath it.
+								// Set to NULL to catch bugs.  It must and will be filled in at a later stage
+								// because the setting of each function's mJumpToLine relies upon the fact that
+								// functions are added to the linked list only upon being formally defined
+								// so that the most recently defined function is always last in the linked
+								// list, awaiting its mJumpToLine that will appear beneath it.
 								deref[deref_count].func = NULL;
 							else // It's a variable rather than a function.
-								if (!(deref[deref_count].var = FindOrAddVar(op_begin, operand_length)))
+								if (   !(deref[deref_count].var = FindOrAddVar(op_begin, operand_length))   )
 									return FAIL; // The called function already displayed the error.
 							++deref_count; // Since above didn't "continue" or "return".
 						}
@@ -6180,30 +5685,30 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 					*op_end = orig_char; // Undo the temporary termination.
 				} // expression pre-parsing loop.
 
-				  // Now that the derefs have all been recognized above, simplify any special cases --
-				  // such as single isolated derefs -- to enhance runtime performance.
-				  //
-				  // There used to be a section here that translated each expression that consisted
-				  // solely of a quoted/literal string into a non-expression (except Post/SendMessage).
-				  // However, that is no longer appropriate for ACT_ASSIGNEXPR (which was the main
-				  // beneficiary) because an optimization further below would wrongly apply
-				  // SetFormat to the assigning of a quoted/literal string like Var:="55".
-				  // Benchmarks show that performance of assigning quoted literal strings is only
-				  // slightly slower when is_expression==true; also, the savings in code size and the
-				  // fact that the translation made ListLines inaccurate (due to the omitted quotes)
-				  // seem to support getting rid of that section.
-				  //
-				  // Make things like "Sleep Var" and "Var := X" into non-expressions.  At runtime,
-				  // such args are expanded normally rather than having to run them through the
-				  // expression evaluator.  A simple test script shows that this one change can
-				  // double the runtime performance of certain commands such as EnvAdd:
-				  // Below is somewhat obsolete but kept for reference:
-				  // This policy is basically saying that expressions are allowed to evaluate to strings
-				  // everywhere appropriate, but that at the moment the only appropriate place is x := y
-				  // because all other expressions should resolve to a numeric value by virtue of the fact
-				  // that they *are* numeric parameters.  ValidateName() serves to eliminate cases where
-				  // a single deref is accompanied by literal numbers, strings, or operators, e.g.
-				  // Var := X + 1 ... Var := Var2 "xyz" ... Var := -Var2
+				// Now that the derefs have all been recognized above, simplify any special cases --
+				// such as single isolated derefs -- to enhance runtime performance.
+				//
+				// There used to be a section here that translated each expression that consisted
+				// solely of a quoted/literal string into a non-expression (except Post/SendMessage).
+				// However, that is no longer appropriate for ACT_ASSIGNEXPR (which was the main
+				// beneficiary) because an optimization further below would wrongly apply
+				// SetFormat to the assigning of a quoted/literal string like Var:="55".
+				// Benchmarks show that performance of assigning quoted literal strings is only
+				// slightly slower when is_expression==true; also, the savings in code size and the
+				// fact that the translation made ListLines inaccurate (due to the omitted quotes)
+				// seem to support getting rid of that section.
+				//
+				// Make things like "Sleep Var" and "Var := X" into non-expressions.  At runtime,
+				// such args are expanded normally rather than having to run them through the
+				// expression evaluator.  A simple test script shows that this one change can
+				// double the runtime performance of certain commands such as EnvAdd:
+				// Below is somewhat obsolete but kept for reference:
+				// This policy is basically saying that expressions are allowed to evaluate to strings
+				// everywhere appropriate, but that at the moment the only appropriate place is x := y
+				// because all other expressions should resolve to a numeric value by virtue of the fact
+				// that they *are* numeric parameters.  ValidateName() serves to eliminate cases where
+				// a single deref is accompanied by literal numbers, strings, or operators, e.g.
+				// Var := X + 1 ... Var := Var2 "xyz" ... Var := -Var2
 				if (deref_count == 1 && Var::ValidateName(this_new_arg.text, DISPLAY_NO_ERROR)) // Single isolated deref.
 				{
 					// ACT_WHILE performs less than 4% faster as a non-expression in these cases, and keeping
@@ -6211,10 +5716,10 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 					// (near mActionType <= ACT_LAST_OPTIMIZED_IF).
 					if (aActionType < ACT_FOR || aActionType > ACT_UNTIL && aActionType != ACT_THROW) // If it is FOR, WHILE, UNTIL or THROW, it would be something like "while x" in this case. Keep those as expressions for the reason above. PerformLoopFor() requires FOR's expression arg to remain an expression.
 						this_new_arg.is_expression = false; // In addition to being an optimization, doing this might also be necessary for things like "Var := ClipboardAll" to work properly.
-															// But if aActionType is ACT_ASSIGNEXPR, it's left as ACT_ASSIGNEXPR vs. ACT_ASSIGN
-															// because it might be necessary to avoid having AutoTrim take effect for := (which
-															// it never should).  In addition, ACT_ASSIGNEXPR probably performs better than
-															// ACT_ASSIGN when is_expression==false.
+					// But if aActionType is ACT_ASSIGNEXPR, it's left as ACT_ASSIGNEXPR vs. ACT_ASSIGN
+					// because it might be necessary to avoid having AutoTrim take effect for := (which
+					// it never should).  In addition, ACT_ASSIGNEXPR probably performs better than
+					// ACT_ASSIGN when is_expression==false.
 				}
 				else if (deref_count && !StrChrAny(this_new_arg.text, EXPR_OPERAND_TERMINATORS)) // No spaces, tabs, etc.
 				{
@@ -6232,7 +5737,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 					// x := Literal%y%Literal%z%Literal -> Same as above.  This is done mostly to support
 					// retrieving array elements whose contents are *non-numeric* without having to use
 					// something like StringTrimRight.
-
+					
 					// Now we know it has at least one deref.  But if any operators or other characters disallowed
 					// in variables are present, it all three cases are disqualified and kept as expressions.
 					// This check is necessary for all three cases:
@@ -6260,13 +5765,13 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 				if (!ParseDerefs(this_new_arg.text, this_aArgMap, deref, deref_count))
 					return FAIL; // It already displayed the error.
 
-								 //////////////////////////////////////////////////////////////
-								 // Allocate mem for this arg's list of dereferenced variables.
-								 //////////////////////////////////////////////////////////////
+			//////////////////////////////////////////////////////////////
+			// Allocate mem for this arg's list of dereferenced variables.
+			//////////////////////////////////////////////////////////////
 			if (deref_count)
 			{
 				// +1 for the "NULL-item" terminator:
-				if (!(this_new_arg.deref = (DerefType *)SimpleHeap::Malloc((deref_count + 1) * sizeof(DerefType))))
+				if (   !(this_new_arg.deref = (DerefType *)SimpleHeap::Malloc((deref_count + 1) * sizeof(DerefType)))   )
 					return ScriptError(ERR_OUTOFMEM);
 				memcpy(this_new_arg.deref, deref, deref_count * sizeof(DerefType));
 				// Terminate the list of derefs with a deref that has a NULL marker:
@@ -6277,10 +5782,10 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		} // for each arg.
 	} // there are more than zero args.
 
-	  //////////////////////////////////////////////////////////////////////////////////////
-	  // Now the above has allocated some dynamic memory, the pointers to which we turn over
-	  // to Line's constructor so that they can be anchored to the new line.
-	  //////////////////////////////////////////////////////////////////////////////////////
+	//////////////////////////////////////////////////////////////////////////////////////
+	// Now the above has allocated some dynamic memory, the pointers to which we turn over
+	// to Line's constructor so that they can be anchored to the new line.
+	//////////////////////////////////////////////////////////////////////////////////////
 	Line *the_new_line = new Line(mCurrFileIndex, mCombinedLineNumber, aActionType, new_arg, aArgc);
 	if (!the_new_line)
 		return ScriptError(ERR_OUTOFMEM);
@@ -6296,26 +5801,26 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 	mLastLine = the_new_line;
 	mCurrLine = the_new_line;  // To help error reporting.
 
-							   ///////////////////////////////////////////////////////////////////
-							   // Do any post-add validation & handling for specific action types.
-							   ///////////////////////////////////////////////////////////////////
-#ifndef AT // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
+	///////////////////////////////////////////////////////////////////
+	// Do any post-add validation & handling for specific action types.
+	///////////////////////////////////////////////////////////////////
+#ifndef AUTOHOTKEYSC // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
 	int value;    // For temp use during validation.
 	double value_float;
 	SYSTEMTIME st;  // same.
 #endif
-					// v1.0.38: The following should help reduce code size, and for some commands helps load-time
-					// performance by avoiding multiple resolutions of a given macro:
+	// v1.0.38: The following should help reduce code size, and for some commands helps load-time
+	// performance by avoiding multiple resolutions of a given macro:
 	LPTSTR new_raw_arg1 = NEW_RAW_ARG1;
 	LPTSTR new_raw_arg2 = NEW_RAW_ARG2;
 	LPTSTR new_raw_arg3 = NEW_RAW_ARG3;
 	LPTSTR new_raw_arg4 = NEW_RAW_ARG4;
 
-	switch (aActionType)
+	switch(aActionType)
 	{
-		// Fix for v1.0.35.02:
-		// THESE FIRST FEW CASES MUST EXIST IN BOTH SELF-CONTAINED AND NORMAL VERSION since they alter the
-		// attributes/members of some types of lines:
+	// Fix for v1.0.35.02:
+	// THESE FIRST FEW CASES MUST EXIST IN BOTH SELF-CONTAINED AND NORMAL VERSION since they alter the
+	// attributes/members of some types of lines:
 	case ACT_SUB:
 		if (aArgc < 2) // Validate at loadtime so that at runtime, DETERMINE_NUMERIC_TYPES and ARG2_AS_INT64 don't have to check that mArgc > 1.
 			return ScriptError(ERR_PARAM2_REQUIRED);
@@ -6323,7 +5828,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 	case ACT_ADD:  // ************ OR IT FELL INTO THIS SECTION FROM ABOVE ************
 	case ACT_MULT:
 	case ACT_DIV:
-#ifndef AT // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
+#ifndef AUTOHOTKEYSC // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
 		if (aArgc > 2) // Then this is ACT_ADD OR ACT_SUB with a 3rd parameter (TimeUnits)
 		{
 			if (*new_raw_arg3 && !line.ArgHasDeref(3))
@@ -6353,30 +5858,30 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		int arg_index;
 		for (arg_index = 1; arg_index < aArgc; ++arg_index) // Up to two iterations: arg #2 and arg#3 (for If[Not]Between)).
 		{
-			if (*new_arg[arg_index].text && !line.ArgHasDeref(arg_index + 1)
+			if (   *new_arg[arg_index].text && !line.ArgHasDeref(arg_index+1)
 				&& !new_arg[arg_index].is_expression  // Expressions don't make sense for this, plus they need their postfix member for other purposes.
 				&& IsPureNumeric(new_arg[arg_index].text, true, false, false) // aAllowImpure==false even for ACT_ADD/SUB/MULT/DIV because those would see almost all impure *LITERAL* numbers like 123abc as variables (too rare anyway).  Check for purity to rule out floats and expressions consisting only of literals such as 1+2 (in case they can ever be encountered here).
 				&& !((aActionType == ACT_ASSIGN || aActionType == ACT_ASSIGNEXPR) // Only these need extra checking because the display format of the number doesn't matter for ADD/SUB/IFEQUAL/IFGREATER/etc. because they treat anything that looks like a number (any format) as a pure number.
 					&& (
-						*new_raw_arg2 == '0' || *new_raw_arg2 == '+' // Assign hex or any unusually-formatted integers the old way so that the format is retained in case its important to the operation of the script (e.g. x:="005", x:=005, x:="0x5", x:="+5", x:=+5).
-						|| new_arg[1].length > 18 // See below.
-												  // Integers that are too long are probably intended to be a series of characters/digits,
-												  // so assign them the old way to keep all of the digits.  Fix for v1.0.48.01: Reduced the
-												  // limit from MAX_INTEGER_LENGTH (20) to 18 so that the assignment (:= and =) of integers
-												  // that are 19 or 20 digits long work as they did prior to v1.0.48 (some of such integers
-												  // would overflow a signed 64-bit value, so keep all of them as strings).
-												  //
-												  // The following can't happen anymore because x:="string" is no longer translated
-												  // into is_expression==false.  There are some reasons given in a section higher above:
-												  //|| IS_SPACE_OR_TAB(new_raw_arg2[new_arg[1].length-1]) // Trailing whitespace, which can happen from something like x:="abc ".
-												  //|| IS_SPACE_OR_TAB(*new_raw_arg2) // This can happen via translation of x:=" abc " to x:= abc at an earlier stage.
-												  // Any LITERAL whitespace around a LITERAL number has always been ignored/omitted,
-												  // so storing binary integers for things like "x = 1" and "x := 1" should behave
-												  // as before, with the exception of "SetFormat, Integer, Hex", which will now be obeyed
-												  // by such assignments when it wasn't before.
-						)))
+							   *new_raw_arg2 == '0' || *new_raw_arg2 == '+' // Assign hex or any unusually-formatted integers the old way so that the format is retained in case its important to the operation of the script (e.g. x:="005", x:=005, x:="0x5", x:="+5", x:=+5).
+							|| new_arg[1].length > 18 // See below.
+							// Integers that are too long are probably intended to be a series of characters/digits,
+							// so assign them the old way to keep all of the digits.  Fix for v1.0.48.01: Reduced the
+							// limit from MAX_INTEGER_LENGTH (20) to 18 so that the assignment (:= and =) of integers
+							// that are 19 or 20 digits long work as they did prior to v1.0.48 (some of such integers
+							// would overflow a signed 64-bit value, so keep all of them as strings).
+							//
+							// The following can't happen anymore because x:="string" is no longer translated
+							// into is_expression==false.  There are some reasons given in a section higher above:
+							//|| IS_SPACE_OR_TAB(new_raw_arg2[new_arg[1].length-1]) // Trailing whitespace, which can happen from something like x:="abc ".
+							//|| IS_SPACE_OR_TAB(*new_raw_arg2) // This can happen via translation of x:=" abc " to x:= abc at an earlier stage.
+							// Any LITERAL whitespace around a LITERAL number has always been ignored/omitted,
+							// so storing binary integers for things like "x = 1" and "x := 1" should behave
+							// as before, with the exception of "SetFormat, Integer, Hex", which will now be obeyed
+							// by such assignments when it wasn't before.
+						))   )
 			{
-				if (!(new_arg[arg_index].postfix = (ExprTokenType *)SimpleHeap::Malloc(sizeof(__int64))))
+				if (   !(new_arg[arg_index].postfix = (ExprTokenType *)SimpleHeap::Malloc(sizeof(__int64)))   )
 					return ScriptError(ERR_OUTOFMEM);
 				*(__int64 *)new_arg[arg_index].postfix = ATOI64(new_arg[arg_index].text);
 			}
@@ -6394,8 +5899,8 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			line.mAttribute = ATTR_LOOP_NORMAL;
 			break;
 		case 1: // With only 1 arg, it must be a normal loop, file-pattern loop, or registry loop.
-				// v1.0.43.07: Added check for new_arg[0].is_expression so that an expression without any variables
-				// it it works (e.g. Loop % 1+1):
+			// v1.0.43.07: Added check for new_arg[0].is_expression so that an expression without any variables
+			// it it works (e.g. Loop % 1+1):
 			if (line.ArgHasDeref(1) || new_arg[0].is_expression) // Impossible to know now what type of loop (only at runtime).
 				line.mAttribute = ATTR_LOOP_UNKNOWN;
 			else
@@ -6449,7 +5954,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		line.mAttribute = ATTR_LOOP_FOR;
 		break;
 
-		// This one alters g_persistent so is present in its entirety (for simplicity) in both SC an non-SC version.
+	// This one alters g_persistent so is present in its entirety (for simplicity) in both SC an non-SC version.
 	case ACT_GUI:
 		// By design, scripts that use the GUI cmd anywhere are persistent.  Doing this here
 		// also allows WinMain() to later detect whether this script should become #SingleInstance.
@@ -6457,7 +5962,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		// script-loading process comes across any explicit uses of #SingleInstance, which would
 		// override the default set here.
 		g_persistent = true;
-#ifndef AT // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
+#ifndef AUTOHOTKEYSC // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
 		if (aArgc > 0 && !line.ArgHasDeref(1))
 		{
 			LPTSTR command, name;
@@ -6475,7 +5980,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 				if (aArgc > 1 && !line.ArgHasDeref(2))
 				{
 					GuiControls control_type;
-					if (!(control_type = line.ConvertGuiControl(new_raw_arg2)))
+					if (   !(control_type = line.ConvertGuiControl(new_raw_arg2))   )
 						return ScriptError(ERR_PARAM2_INVALID, new_raw_arg2);
 					if (control_type == GUI_CONTROL_TREEVIEW && aArgc > 3) // Reserve it for future use such as a tab-indented continuation section that lists the tree hierarchy.
 						return ScriptError(ERR_PARAM4_MUST_BE_BLANK, new_raw_arg4);
@@ -6499,13 +6004,13 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 				if (aArgc > 2)
 					return ScriptError(_T("Parameter #3 and beyond should be omitted in this case."), new_raw_arg3);
 				break;
-				// No action for these since they have a varying number of optional params:
-				//case GUI_CMD_NEW:
-				//case GUI_CMD_SHOW:
-				//case GUI_CMD_FONT:
-				//case GUI_CMD_MARGIN:
-				//case GUI_CMD_TAB:
-				//case GUI_CMD_COLOR: No load-time param validation to avoid larger EXE size.
+			// No action for these since they have a varying number of optional params:
+			//case GUI_CMD_NEW:
+			//case GUI_CMD_SHOW:
+			//case GUI_CMD_FONT:
+			//case GUI_CMD_MARGIN:
+			//case GUI_CMD_TAB:
+			//case GUI_CMD_COLOR: No load-time param validation to avoid larger EXE size.
 			}
 		}
 #endif
@@ -6521,7 +6026,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		// been parsed prior to them (e.g. something like "Gosub, DefineGroups" may appear
 		// in the auto-execute portion of the script).
 		if (!line.ArgHasDeref(1))
-			if (!(line.mAttribute = FindGroup(new_raw_arg1, true))) // Create-if-not-found so that performance is enhanced at runtime.
+			if (   !(line.mAttribute = FindGroup(new_raw_arg1, true))   ) // Create-if-not-found so that performance is enhanced at runtime.
 				return FAIL;  // The above already displayed the error.
 		if (aActionType == ACT_GROUPACTIVATE || aActionType == ACT_GROUPDEACTIVATE)
 		{
@@ -6535,7 +6040,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 					return ScriptError(ERR_PARAM2_INVALID, new_raw_arg2);
 		break;
 
-	case ACT_SETFORMAT: // Must be done even when AT is defined so that g_WriteCacheDisabledInt64/Double is properly updated.
+	case ACT_SETFORMAT: // Must be done even when AUTOHOTKEYSC is defined so that g_WriteCacheDisabledInt64/Double is properly updated.
 		if (aArgc < 1)
 			break;
 		if (line.ArgHasDeref(1)) // Something like "SetFormat, %Var%, ..."
@@ -6574,7 +6079,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		// the 'f' to make it a valid format specifier string:
 		break;
 
-	case ACT_STRINGSPLIT: // v1.0.48.04: Moved this section so that it is done even when AT is defined, because the steps below are necessary for both.
+	case ACT_STRINGSPLIT: // v1.0.48.04: Moved this section so that it is done even when AUTOHOTKEYSC is defined, because the steps below are necessary for both.
 		if (*new_raw_arg1 && !line.ArgHasDeref(1)) // The output array must be a legal name.
 		{
 			// 1.0.46.10: Fixed to look up ArrayName0 in advance (here at loadtime) so that runtime can
@@ -6583,14 +6088,14 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			// memory, that list is longer available at runtime).
 			TCHAR temp_var_name[MAX_VAR_NAME_LENGTH + 10]; // Provide extra room for trailing "0", and to detect names that are too long.
 			sntprintf(temp_var_name, _countof(temp_var_name), _T("%s0"), new_raw_arg1);
-			if (!(the_new_line->mAttribute = FindOrAddVar(temp_var_name)))
+			if (   !(the_new_line->mAttribute = FindOrAddVar(temp_var_name))   )
 				return FAIL;  // The above already displayed the error.
 		}
 		//else it's a dynamic array name.  Since that's very rare, just use the old runtime behavior for
 		// backward compatibility.
 		break;
 
-#ifndef AT // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
+#ifndef AUTOHOTKEYSC // For v1.0.35.01, some syntax checking is removed in compiled scripts to reduce their size.
 	case ACT_RETURN:
 		if (aArgc > 0 && !g->CurrentFunc)
 			return ScriptError(_T("Return's parameter should be blank except inside a function."));
@@ -6945,7 +6450,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 				if (VAR(line.mArg[0])->Type() == VAR_CLIPBOARD)
 				{
 					if (aArgc < 3)
-						return ScriptError(ERR_PARAM3_MUST_NOT_BE_BLANK);
+						return ScriptError(_T("Parameter #3 must not be blank in this case."));
 				}
 				else
 					if (aArgc > 2)
@@ -6958,7 +6463,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			// sees a valid no-deref expression such as 1+2 as invalid.
 			if (!line.ArgHasDeref(3)) // "true" since it might have been made into an InputVar due to being a simple expression.
 			{
-				switch (trans_cmd)
+				switch(trans_cmd)
 				{
 				case TRANS_CMD_CHR:
 				case TRANS_CMD_BITNOT:
@@ -6995,15 +6500,15 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 						return ScriptError(_T("Parameter #3 must be a positive integer in this case."), new_raw_arg3);
 					break;
 
-					// The following are not listed above because no validation of Parameter #3 is needed at this stage:
-					// TRANS_CMD_ASC
-					// TRANS_CMD_UNICODE
-					// TRANS_CMD_HTML
-					// TRANS_CMD_DEREF
+				// The following are not listed above because no validation of Parameter #3 is needed at this stage:
+				// TRANS_CMD_ASC
+				// TRANS_CMD_UNICODE
+				// TRANS_CMD_HTML
+				// TRANS_CMD_DEREF
 				}
 			}
 
-			switch (trans_cmd)
+			switch(trans_cmd)
 			{
 			case TRANS_CMD_ASC:
 			case TRANS_CMD_CHR:
@@ -7063,7 +6568,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 #endif
 			}
 
-			switch (trans_cmd)
+			switch(trans_cmd)
 			{
 			case TRANS_CMD_CHR:
 				if (!line.ArgHasDeref(3))
@@ -7086,11 +6591,11 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		{
 			MenuCommands menu_cmd = line.ConvertMenuCommand(new_raw_arg2);
 
-			switch (menu_cmd)
+			switch(menu_cmd)
 			{
 			case MENU_CMD_TIP:
-				//case MENU_CMD_ICON: // L17: Now valid for other menus, used to set menu item icons.
-				//case MENU_CMD_NOICON:
+			//case MENU_CMD_ICON: // L17: Now valid for other menus, used to set menu item icons.
+			//case MENU_CMD_NOICON:
 			case MENU_CMD_MAINWINDOW:
 			case MENU_CMD_NOMAINWINDOW:
 			case MENU_CMD_CLICK:
@@ -7114,7 +6619,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			case MENU_CMD_STANDARD:
 			case MENU_CMD_NOSTANDARD:
 			case MENU_CMD_DELETEALL:
-				//case MENU_CMD_NOICON: // L17: Parameter #3 is now used to specify a menu item whose icon should be removed.
+			//case MENU_CMD_NOICON: // L17: Parameter #3 is now used to specify a menu item whose icon should be removed.
 			case MENU_CMD_MAINWINDOW:
 			case MENU_CMD_NOMAINWINDOW:
 				if (*new_raw_arg3 || *new_raw_arg4 || *NEW_RAW_ARG5 || *NEW_RAW_ARG6)
@@ -7134,9 +6639,9 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			case MENU_CMD_TIP:
 			case MENU_CMD_CLICK:
 			case MENU_CMD_NOICON: // L17: See comment in section above.
-				if (menu_cmd != MENU_CMD_RENAME && (*new_raw_arg4 || *NEW_RAW_ARG5 || *NEW_RAW_ARG6))
+				if (   menu_cmd != MENU_CMD_RENAME && (*new_raw_arg4 || *NEW_RAW_ARG5 || *NEW_RAW_ARG6)   )
 					return ScriptError(_T("Parameter #4 and beyond should be omitted in this case."), new_raw_arg4);
-				switch (menu_cmd)
+				switch(menu_cmd)
 				{
 				case MENU_CMD_USEERRORLEVEL:
 				case MENU_CMD_TIP:
@@ -7146,16 +6651,16 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 					break;  // i.e. for commands other than the above, do the default below.
 				default:
 					if (!*new_raw_arg3)
-						return ScriptError(ERR_PARAM3_MUST_NOT_BE_BLANK);
+						return ScriptError(_T("Parameter #3 must not be blank in this case."));
 				}
 				break;
 
-				// These have a highly variable number of parameters, or are too rarely used
-				// to warrant detailed load-time checking, so are not validated here:
-				//case MENU_CMD_SHOW:
-				//case MENU_CMD_ADD:
-				//case MENU_CMD_COLOR:
-				//case MENU_CMD_ICON:
+			// These have a highly variable number of parameters, or are too rarely used
+			// to warrant detailed load-time checking, so are not validated here:
+			//case MENU_CMD_SHOW:
+			//case MENU_CMD_ADD:
+			//case MENU_CMD_COLOR:
+			//case MENU_CMD_ICON:
 			}
 		}
 		break;
@@ -7183,7 +6688,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			case CONTROL_CMD_CHOOSESTRING:
 			case CONTROL_CMD_EDITPASTE:
 				if (control_cmd != CONTROL_CMD_TABLEFT && control_cmd != CONTROL_CMD_TABRIGHT && !*new_raw_arg2)
-					return ScriptError(ERR_PARAM2_MUST_NOT_BE_BLANK);
+					return ScriptError(_T("Parameter #2 must not be blank in this case."));
 				break;
 			default: // All commands except the above should have a blank Value parameter.
 				if (*new_raw_arg2)
@@ -7203,7 +6708,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			case CONTROLGET_CMD_FINDSTRING:
 			case CONTROLGET_CMD_LINE:
 				if (!*new_raw_arg3)
-					return ScriptError(ERR_PARAM3_MUST_NOT_BE_BLANK);
+					return ScriptError(_T("Parameter #3 must not be blank in this case."));
 				break;
 			case CONTROLGET_CMD_LIST:
 				break; // Simply break for any sub-commands that have an optional parameter 3.
@@ -7238,7 +6743,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			case GUICONTROL_CMD_CHOOSE:
 			case GUICONTROL_CMD_CHOOSESTRING:
 				if (!*new_raw_arg3)
-					return ScriptError(ERR_PARAM3_MUST_NOT_BE_BLANK);
+					return ScriptError(_T("Parameter #3 must not be blank in this case."));
 				break;
 			default: // All commands except the above should have a blank Text parameter.
 				if (*new_raw_arg3)
@@ -7284,7 +6789,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			if (!drive_cmd)
 				return ScriptError(ERR_PARAM1_INVALID, new_raw_arg1);
 			if (drive_cmd != DRIVE_CMD_EJECT && !*new_raw_arg2)
-				return ScriptError(ERR_PARAM2_MUST_NOT_BE_BLANK);
+				return ScriptError(_T("Parameter #2 must not be blank in this case."));
 			// For DRIVE_CMD_LABEL: Note that it is possible and allowed for the new label to be blank.
 			// Not currently done since all sub-commands take a mandatory or optional ARG3:
 			//if (drive_cmd != ... && *new_raw_arg3)
@@ -7299,10 +6804,10 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 			if (!drive_get_cmd)
 				return ScriptError(ERR_PARAM2_INVALID, new_raw_arg2);
 			if (drive_get_cmd != DRIVEGET_CMD_LIST && drive_get_cmd != DRIVEGET_CMD_STATUSCD && !*new_raw_arg3)
-				return ScriptError(ERR_PARAM3_MUST_NOT_BE_BLANK);
+				return ScriptError(_T("Parameter #3 must not be blank in this case."));
 			if (drive_get_cmd != DRIVEGET_CMD_SETLABEL && (aArgc < 1 || line.mArg[0].type == ARG_TYPE_NORMAL))
 				// The output variable has been omitted.
-				return ScriptError(ERR_PARAM1_MUST_NOT_BE_BLANK);
+				return ScriptError(_T("Parameter #1 must not be blank in this case."));
 		}
 		break;
 
@@ -7311,7 +6816,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		{
 			ProcessCmds process_cmd = line.ConvertProcessCmd(new_raw_arg1);
 			if (process_cmd != PROCESS_CMD_PRIORITY && process_cmd != PROCESS_CMD_EXIST && !*new_raw_arg2)
-				return ScriptError(ERR_PARAM2_MUST_NOT_BE_BLANK);
+				return ScriptError(_T("Parameter #2 must not be blank in this case."));
 			switch (process_cmd)
 			{
 			case PROCESS_CMD_INVALID:
@@ -7334,22 +6839,22 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		}
 		break;
 
-		// For ACT_WINMOVE, don't validate anything for mandatory args so that its two modes of
-		// operation can be supported: 2-param mode and normal-param mode.
-		// For these, although we validate that at least one is non-blank here, it's okay at
-		// runtime for them all to resolve to be blank, without an error being reported.
-		// It's probably more flexible that way since the commands are equipped to handle
-		// all-blank params.
-		// Not these because they can be used with the "last-used window" mode:
-		//case ACT_IFWINEXIST:
-		//case ACT_IFWINNOTEXIST:
-		// Not these because they can have their window params all-blank to work in "last-used window" mode:
-		//case ACT_IFWINACTIVE:
-		//case ACT_IFWINNOTACTIVE:
-		//case ACT_WINACTIVATE:
-		//case ACT_WINWAITCLOSE:
-		//case ACT_WINWAITACTIVE:
-		//case ACT_WINWAITNOTACTIVE:
+	// For ACT_WINMOVE, don't validate anything for mandatory args so that its two modes of
+	// operation can be supported: 2-param mode and normal-param mode.
+	// For these, although we validate that at least one is non-blank here, it's okay at
+	// runtime for them all to resolve to be blank, without an error being reported.
+	// It's probably more flexible that way since the commands are equipped to handle
+	// all-blank params.
+	// Not these because they can be used with the "last-used window" mode:
+	//case ACT_IFWINEXIST:
+	//case ACT_IFWINNOTEXIST:
+	// Not these because they can have their window params all-blank to work in "last-used window" mode:
+	//case ACT_IFWINACTIVE:
+	//case ACT_IFWINNOTACTIVE:
+	//case ACT_WINACTIVATE:
+	//case ACT_WINWAITCLOSE:
+	//case ACT_WINWAITACTIVE:
+	//case ACT_WINWAITNOTACTIVE:
 	case ACT_WINACTIVATEBOTTOM:
 		if (!*new_raw_arg1 && !*new_raw_arg2 && !*new_raw_arg3 && !*new_raw_arg4)
 			return ScriptError(ERR_WINDOW_PARAM);
@@ -7371,7 +6876,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 	case ACT_WINSET:
 		if (aArgc > 0 && !line.ArgHasDeref(1))
 		{
-			switch (line.ConvertWinSetAttribute(new_raw_arg1))
+			switch(line.ConvertWinSetAttribute(new_raw_arg1))
 			{
 			case WINSET_TRANSPARENT:
 				if (aArgc > 1 && !line.ArgHasDeref(2))
@@ -7383,7 +6888,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 				break;
 			case WINSET_TRANSCOLOR:
 				if (!*new_raw_arg2)
-					return ScriptError(ERR_PARAM2_MUST_NOT_BE_BLANK);
+					return ScriptError(_T("Parameter #2 must not be blank in this case."));
 				break;
 			case WINSET_ALWAYSONTOP:
 				if (aArgc > 1 && !line.ArgHasDeref(2) && !line.ConvertOnOffToggle(new_raw_arg2))
@@ -7462,7 +6967,7 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 		if (aArgc > 0 && !line.ArgHasDeref(1) && line.ConvertFileEncoding(new_raw_arg1) == -1)
 			return ScriptError(ERR_PARAM1_INVALID, new_raw_arg1);
 		break;
-#endif  // The above section is in place only if when not AT.
+#endif  // The above section is in place only if when not AUTOHOTKEYSC.
 	}
 
 	if (mNextLineIsFunctionBody && do_update_labels) // do_update_labels: false for '#if expr' and 'static var:=expr', neither of which should be treated as part of the function's body.
@@ -7478,23 +6983,23 @@ ResultType Script::AddLine(ActionTypeType aActionType, LPTSTR aArg[], int aArgc,
 	if (aActionType == ACT_BLOCK_BEGIN)
 	{
 		++mCurrentFuncOpenBlockCount; // It's okay to increment unconditionally because it is reset to zero every time a new function definition is entered.
-									  // It's only necessary to check the last func, not the one(s) that come before it, to see if its
-									  // mJumpToLine is NULL.  This is because our caller has made it impossible for a function
-									  // to ever have been defined in the first place if it lacked its opening brace.  Search on
-									  // "consecutive function" for more comments.  In addition, the following does not check
-									  // that mCurrentFuncOpenBlockCount is exactly 1, because: 1) Want to be able to support function
-									  // definitions inside of other function definitions (to help script maintainability); 2) If
-									  // mCurrentFuncOpenBlockCount is 0 or negative, that will be caught as a syntax error by PreparseBlocks(),
-									  // which yields a more informative error message that we could here.
+		// It's only necessary to check the last func, not the one(s) that come before it, to see if its
+		// mJumpToLine is NULL.  This is because our caller has made it impossible for a function
+		// to ever have been defined in the first place if it lacked its opening brace.  Search on
+		// "consecutive function" for more comments.  In addition, the following does not check
+		// that mCurrentFuncOpenBlockCount is exactly 1, because: 1) Want to be able to support function
+		// definitions inside of other function definitions (to help script maintainability); 2) If
+		// mCurrentFuncOpenBlockCount is 0 or negative, that will be caught as a syntax error by PreparseBlocks(),
+		// which yields a more informative error message that we could here.
 		if (g->CurrentFunc && !g->CurrentFunc->mJumpToLine)
 		{
 			// The above check relies upon the fact that g->CurrentFunc->mIsBuiltIn must be false at this stage,
 			// which is the case because any non-overridden built-in function won't get added until after all
 			// lines have been added, namely PreparseBlocks().
 			line.mAttribute = ATTR_TRUE;  // Flag this ACT_BLOCK_BEGIN as the opening brace of the function's body.
-										  // For efficiency, and to prevent ExecUntil from starting a new recursion layer for the function's
-										  // body, the function's execution should begin at the first line after its open-brace (even if that
-										  // first line is another open-brace or the function's close-brace (i.e. an empty function):
+			// For efficiency, and to prevent ExecUntil from starting a new recursion layer for the function's
+			// body, the function's execution should begin at the first line after its open-brace (even if that
+			// first line is another open-brace or the function's close-brace (i.e. an empty function):
 			mNextLineIsFunctionBody = true;
 		}
 	}
@@ -7574,7 +7079,7 @@ ResultType Script::ParseDerefs(LPTSTR aArgText, LPTSTR aArgMap, DerefType *aDere
 {
 	size_t deref_string_length; // So that overflow can be detected, this is not of type DerefLengthType.
 
-								// For each dereference found in aArgText:
+	// For each dereference found in aArgText:
 	for (int j = 0;; ++j)  // Increment to skip over the symbol just found by the inner for().
 	{
 		// Find next non-literal g_DerefChar:
@@ -7586,7 +7091,7 @@ ResultType Script::ParseDerefs(LPTSTR aArgText, LPTSTR aArgMap, DerefType *aDere
 			return ScriptError(TOO_MANY_REFS, aArgText); // Short msg since so rare.
 		DerefType &this_deref = aDeref[aDerefCount];  // For performance.
 		this_deref.marker = aArgText + j;  // Store the deref's starting location.
-										   // Find next g_DerefChar, even if it's a literal.
+		// Find next g_DerefChar, even if it's a literal.
 		for (++j; aArgText[j] && aArgText[j] != g_DerefChar; ++j);
 		if (!aArgText[j])
 			return ScriptError(_T("This parameter contains a variable name missing its ending percent sign."), aArgText);
@@ -7600,7 +7105,7 @@ ResultType Script::ParseDerefs(LPTSTR aArgText, LPTSTR aArgMap, DerefType *aDere
 			return ScriptError(_T("Variable name too long."), aArgText); // Short msg. since so rare.
 		this_deref.is_function = false;
 		this_deref.length = (DerefLengthType)deref_string_length;
-		if (!(this_deref.var = FindOrAddVar(this_deref.marker + 1, this_deref.length - 2)))
+		if (   !(this_deref.var = FindOrAddVar(this_deref.marker + 1, this_deref.length - 2))   )
 			return FAIL;  // The called function already displayed the error.
 		++aDerefCount;
 	} // for each dereference.
@@ -7619,22 +7124,22 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 {
 	LPTSTR param_end, param_start = _tcschr(aBuf, '('); // Caller has ensured that this will return non-NULL.
 	int insert_pos;
-
+	
 	if (mClassObjectCount) // Class method or property getter/setter.
 	{
 		Object *class_object = mClassObject[mClassObjectCount - 1];
 
 		*param_start = '\0'; // Temporarily terminate, for simplicity.
 
-							 // Build the fully-qualified method name for A_ThisFunc and ListVars:
-							 // AddFunc() enforces a limit of MAX_VAR_NAME_LENGTH characters for function names, which is relied
-							 // on by FindFunc(), BIF_OnMessage() and perhaps others.  For simplicity, allow one extra char to be
-							 // printed and rely on AddFunc() detecting that the name is too long.
+		// Build the fully-qualified method name for A_ThisFunc and ListVars:
+		// AddFunc() enforces a limit of MAX_VAR_NAME_LENGTH characters for function names, which is relied
+		// on by FindFunc(), BIF_OnMessage() and perhaps others.  For simplicity, allow one extra char to be
+		// printed and rely on AddFunc() detecting that the name is too long.
 		TCHAR full_name[MAX_VAR_NAME_LENGTH + 1 + 1]; // Extra +1 for null terminator.
 		_sntprintf(full_name, MAX_VAR_NAME_LENGTH + 1, _T("%s.%s"), mClassName, aBuf);
 		full_name[MAX_VAR_NAME_LENGTH + 1] = '\0'; // Must terminate at this exact point if _sntprintf hit the limit.
 
-												   // Check for duplicates and determine insert_pos:
+		// Check for duplicates and determine insert_pos:
 		Func *found_func;
 		ExprTokenType found_item;
 		if (!mClassProperty && class_object->GetItem(found_item, aBuf) // Must be done in addition to the below to detect conflicting var/method declarations.
@@ -7642,11 +7147,11 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 		{
 			return ScriptError(ERR_DUPLICATE_DECLARATION, aBuf); // The parameters are omitted due to temporary termination above.  This might make it more obvious why "X[]" and "X()" are considered duplicates.
 		}
-
+		
 		*param_start = '('; // Undo temporary termination.
 
-							// Below passes class_object for AddFunc() to store the func "by reference" in it:
-		if (!(g->CurrentFunc = AddFunc(full_name, 0, false, insert_pos, class_object)))
+		// Below passes class_object for AddFunc() to store the func "by reference" in it:
+		if (  !(g->CurrentFunc = AddFunc(full_name, 0, false, insert_pos, class_object))  )
 			return FAIL;
 	}
 	else
@@ -7668,7 +7173,7 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 		else
 			// The value of g->CurrentFunc must be set here rather than by our caller since AddVar(), which we call,
 			// relies upon it having been done.
-			if (!(g->CurrentFunc = AddFunc(aBuf, param_start - aBuf, false, insert_pos)))
+			if (   !(g->CurrentFunc = AddFunc(aBuf, param_start - aBuf, false, insert_pos))   )
 				return FAIL; // It already displayed the error.
 	}
 
@@ -7683,7 +7188,7 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 	if (mClassObjectCount)
 	{
 		// Add the automatic/hidden "this" parameter.
-		if (!(param[0].var = FindOrAddVar(_T("this"), 4, VAR_DECLARE_LOCAL | VAR_LOCAL_FUNCPARAM)))
+		if (  !(param[0].var = FindOrAddVar(_T("this"), 4, VAR_DECLARE_LOCAL | VAR_LOCAL_FUNCPARAM))  )
 			return FAIL;
 		param[0].default_type = PARAM_DEFAULT_NONE;
 		param[0].is_byref = false;
@@ -7694,7 +7199,7 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 		{
 			// Unlike __Set, the property setters accept the value as the second parameter,
 			// so that we can make it automatic here and make variadic properties easier.
-			if (!(param[1].var = FindOrAddVar(_T("value"), 5, VAR_DECLARE_LOCAL | VAR_LOCAL_FUNCPARAM)))
+			if (  !(param[1].var = FindOrAddVar(_T("value"), 5, VAR_DECLARE_LOCAL | VAR_LOCAL_FUNCPARAM))  )
 				return FAIL;
 			param[1].default_type = PARAM_DEFAULT_NONE;
 			param[1].is_byref = false;
@@ -7709,31 +7214,31 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 			break;
 
 		// Must start the search at param_start, not param_start+1, so that something like fn(, x) will be properly handled:
-		if (!*param_start || !(param_end = StrChrAny(param_start, _T(", \t:=*)")))) // Look for first comma, space, tab, =, or close-paren.
+		if (   !*param_start || !(param_end = StrChrAny(param_start, _T(", \t:=*)")))   ) // Look for first comma, space, tab, =, or close-paren.
 			return ScriptError(ERR_MISSING_CLOSE_PAREN, aBuf);
 
 		if (param_count >= MAX_FUNCTION_PARAMS)
 			return ScriptError(_T("Too many params."), param_start); // Short msg since so rare.
 		FuncParam &this_param = param[param_count]; // For performance and convenience.
 
-													// To enhance syntax error catching, consider ByRef to be a keyword; i.e. that can never be the name
-													// of a formal parameter:
+		// To enhance syntax error catching, consider ByRef to be a keyword; i.e. that can never be the name
+		// of a formal parameter:
 		if (this_param.is_byref = !tcslicmp(param_start, _T("ByRef"), param_end - param_start)) // ByRef.
 		{
 			// Omit the ByRef keyword from further consideration:
 			param_start = omit_leading_whitespace(param_end);
-			if (!*param_start || !(param_end = StrChrAny(param_start, _T(", \t:=*)")))) // Look for first comma, space, tab, =, or close-paren.
+			if (   !*param_start || !(param_end = StrChrAny(param_start, _T(", \t:=*)")))   ) // Look for first comma, space, tab, =, or close-paren.
 				return ScriptError(ERR_MISSING_CLOSE_PAREN, aBuf);
 		}
 
-		if (!(param_length = param_end - param_start))
+		if (   !(param_length = param_end - param_start)   )
 			return ScriptError(ERR_BLANK_PARAM, aBuf); // Reporting aBuf vs. param_start seems more informative since Vicinity isn't shown.
 
 		if (this_param.var = FindVar(param_start, param_length, &insert_pos, FINDVAR_LOCAL))  // Assign.
 			return ScriptError(_T("Duplicate parameter."), param_start);
-		if (!(this_param.var = AddVar(param_start, param_length, insert_pos, VAR_DECLARE_LOCAL | VAR_LOCAL_FUNCPARAM)))	// Pass VAR_LOCAL_FUNCPARAM as last parameter to mean "it's a local but more specifically a function's parameter".
+		if (   !(this_param.var = AddVar(param_start, param_length, insert_pos, VAR_DECLARE_LOCAL | VAR_LOCAL_FUNCPARAM))   )	// Pass VAR_LOCAL_FUNCPARAM as last parameter to mean "it's a local but more specifically a function's parameter".
 			return FAIL; // It already displayed the error, including attempts to have reserved names as parameter names.
-
+		
 		this_param.default_type = PARAM_DEFAULT_NONE;  // Set default.
 		param_start = omit_leading_whitespace(param_end);
 
@@ -7778,18 +7283,18 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 						++param_end;
 						if (*param_end != '"') // String terminator or some non-quote character.
 							break;  // The previous char is the ending quote.
-									//else a pair of quotes, which resolves to a single literal quote. So fall through
-									// to the below, which will copy of quote character to the buffer. Then this pair
-									// is skipped over and the loop continues until the real end-quote is found.
+						//else a pair of quotes, which resolves to a single literal quote. So fall through
+						// to the below, which will copy of quote character to the buffer. Then this pair
+						// is skipped over and the loop continues until the real end-quote is found.
 					}
 					//else some character other than '\0' or '"'.
 					*target++ = *param_end++;
 				}
 				*target = '\0'; // Terminate it in the buffer.
-								// The above has also set param_end for use near the bottom of the loop.
+				// The above has also set param_end for use near the bottom of the loop.
 				ConvertEscapeSequences(buf, g_EscapeChar, false); // Raw escape sequences like `n haven't been converted yet, so do it now.
 				this_param.default_type = PARAM_DEFAULT_STR;
-				this_param.default_str = *buf ? SimpleHeap::Malloc(buf, target - buf) : _T("");
+				this_param.default_str = *buf ? SimpleHeap::Malloc(buf, target-buf) : _T("");
 			}
 			else // A default value other than a quoted/literal string.
 			{
@@ -7815,7 +7320,7 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 					// the script would be supported (since other globals don't exist yet). So it seems
 					// best to wait until full/comprehensive support for expressions is studied/designed
 					// for both static initializers and parameter-default-values.
-					switch (IsPureNumeric(buf, true, false, true))
+					switch(IsPureNumeric(buf, true, false, true))
 					{
 					case PURE_INTEGER:
 						// It's always been somewhat inconsistent that for parameter default values,
@@ -7835,7 +7340,7 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 				}
 			}
 			param_must_have_default = true;  // For now, all other params after this one must also have default values.
-											 // Set up for the next iteration:
+			// Set up for the next iteration:
 			param_start = omit_leading_whitespace(param_end);
 		}
 		else // This parameter does not have a default value specified.
@@ -7865,7 +7370,7 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 	{
 		// Allocate memory only for the actual number of parameters actually present.
 		size_t size = param_count * sizeof(param[0]);
-		if (!(func.mParam = (FuncParam *)SimpleHeap::Malloc(size)))
+		if (   !(func.mParam = (FuncParam *)SimpleHeap::Malloc(size))   )
 			return ScriptError(ERR_OUTOFMEM);
 		func.mParamCount = param_count - func.mIsVariadic; // i.e. don't count the final "param*" of a variadic function.
 		memcpy(func.mParam, param, size);
@@ -7910,7 +7415,7 @@ ResultType Script::DefineFunc(LPTSTR aBuf, Var *aFuncGlobalVar[])
 			return ScriptError(_T("A label must not point to a function."), mLastLabel->mName);
 		// Since above didn't return, the label or labels must have been hotkey labels.
 		if (func.mMinParams)
-			return ScriptError(ERR_HOTKEY_FUNC_PARAMS, aBuf);
+			return ScriptError(_T("Parameters of hotkey functions must be optional."), aBuf);
 	}
 
 	// Indicate success:
@@ -7941,7 +7446,7 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 		LPTSTR base_class_name = omit_leading_whitespace(cp + 8);
 		if (!*base_class_name)
 			return ScriptError(_T("Missing class name."), cp);
-		if (!(base_class = FindClass(base_class_name)))
+		if (  !(base_class = FindClass(base_class_name))  )
 		{
 			// This class hasn't been defined yet, but it might be.  Automatically create the
 			// class, but store it in the "unresolved" list.  When its definition is encountered,
@@ -7954,13 +7459,13 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 			}
 			else
 			{
-				if (!mUnresolvedClasses && !(mUnresolvedClasses = Object::Create())
+				if (  !mUnresolvedClasses && !(mUnresolvedClasses = Object::Create())
 					|| !(base_class = Object::Create())
 					// Storing the file/line index in "__Class" instead of something like "DBG" or
 					// two separate fields helps to reduce code size and maybe memory fragmentation.
 					// It will be overwritten when the class definition is encountered.
 					|| !base_class->SetItem(_T("__Class"), ((__int64)mCurrFileIndex << 32) | mCombinedLineNumber)
-					|| !mUnresolvedClasses->SetItem(base_class_name, base_class))
+					|| !mUnresolvedClasses->SetItem(base_class_name, base_class)  )
 					return ScriptError(ERR_OUTOFMEM);
 			}
 		}
@@ -7971,7 +7476,7 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 		return ScriptError(_T("Invalid class name."), class_name);
 
 	class_object = NULL; // This initializes the entry in the mClassObject array.
-
+	
 	if (mClassObjectCount) // Nested class definition.
 	{
 		outer_class = mClassObject[mClassObjectCount - 1];
@@ -7982,7 +7487,7 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 	else // Top-level class definition.
 	{
 		*mClassName = '\0'; // Init.
-		if (!(class_var = FindOrAddVar(class_name)))
+		if (  !(class_var = FindOrAddVar(class_name))  )
 			return FAIL;
 		if (class_var->IsObject())
 			// At this point it can only be an Object() created by a class definition.
@@ -7993,7 +7498,7 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 			// an ordinary global.
 			class_var->Scope() = VAR_DECLARE_SUPER_GLOBAL;
 	}
-
+	
 	if (_tcslen(mClassName) + _tcslen(class_name) + 1 >= _countof(mClassName)) // +1 for '.'
 		return ScriptError(_T("Full class name is too long."));
 	if (*mClassName)
@@ -8008,7 +7513,7 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 
 	token.symbol = SYM_STRING;
 	token.marker = mClassName;
-
+	
 	if (mUnresolvedClasses)
 	{
 		ExprTokenType result_token, *param = &token;
@@ -8017,7 +7522,7 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 		result_token.mem_to_free = NULL;
 		// Search for class and simultaneously remove it from the unresolved list:
 		mUnresolvedClasses->_Remove(result_token, &param, 1); // result_token := mUnresolvedClasses.Remove(token)
-															  // If a field was found/removed, it can only be SYM_OBJECT.
+		// If a field was found/removed, it can only be SYM_OBJECT.
 		if (result_token.symbol == SYM_OBJECT)
 		{
 			// Use this object as the class.  At least one other object already refers to it as mBase.
@@ -8027,11 +7532,11 @@ ResultType Script::DefineClass(LPTSTR aBuf)
 		}
 	}
 
-	if (!(class_object || (class_object = Object::Create()))
+	if (   !(class_object || (class_object = Object::Create()))
 		|| !(class_object->SetItem(_T("__Class"), token))
 		|| !(mClassObjectCount
-			? outer_class->SetItem(class_name, class_object) // Assign to super_class[class_name].
-			: class_var->Assign(class_object))) // Assign to global variable named %class_name%.
+				? outer_class->SetItem(class_name, class_object) // Assign to super_class[class_name].
+				: class_var->Assign(class_object))   ) // Assign to global variable named %class_name%.
 		return ScriptError(ERR_OUTOFMEM);
 
 	class_object->SetBase(base_class); // May be NULL.
@@ -8058,7 +7563,7 @@ ResultType Script::DefineClassProperty(LPTSTR aBuf)
 	}
 	else
 		param_start = _T("()");
-
+	
 	// Save the property name and parameter list for later use with DefineFunc().
 	mClassPropertyDef = tmalloc(_tcslen(aBuf) + 7); // +7 for ".Get()\0"
 	if (!mClassPropertyDef)
@@ -8087,7 +7592,7 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 	empty_token.marker = _T("");
 	int_token.symbol = SYM_INTEGER; // Value used to mark instance variables.
 	int_token.value_int64 = 1;      //
-
+					
 	for (item = omit_leading_whitespace(aBuf); *item;) // FOR EACH COMMA-SEPARATED ITEM IN THE DECLARATION LIST.
 	{
 		item_end = find_identifier_end(item);
@@ -8099,15 +7604,15 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 		if (orig_char == '.')
 		{
 			*item_end = orig_char; // Undo termination.
-								   // This is something like "object.key := 5", which is only valid if "object" was
-								   // previously declared (and will presumably be assigned an object at runtime).
-								   // Ensure that at least the root class var exists; any further validation would
-								   // be impossible since the object doesn't exist yet.
+			// This is something like "object.key := 5", which is only valid if "object" was
+			// previously declared (and will presumably be assigned an object at runtime).
+			// Ensure that at least the root class var exists; any further validation would
+			// be impossible since the object doesn't exist yet.
 			if (!item_exists)
 				return ScriptError(_T("Unknown class var."), item);
 			for (TCHAR *cp; *item_end == '.'; item_end = cp)
 			{
-				for (cp = item_end + 1; IS_IDENTIFIER_CHAR(*cp); ++cp);
+				for (cp = item_end + 1; cisalnum(*cp) || *cp == '_'; ++cp);
 				if (cp == item_end + 1)
 					// This '.' wasn't followed by a valid identifier.  Leave item_end
 					// pointing at '.' and allow the switch() below to report the error.
@@ -8125,7 +7630,7 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 			*item_end = orig_char; // Undo termination.
 		}
 		size_t name_length = item_end - item;
-
+						
 		// This section is very similar to the one in ParseAndAddLine() which deals with
 		// variable declarations, so maybe maintain them together:
 
@@ -8151,7 +7656,7 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 		default:
 			return ScriptError(ERR_INVALID_CLASS_VAR, item);
 		}
-
+						
 		// Since above didn't "continue", this declared variable also has an initializer.
 		// Append the class name, ":=" and initializer to pending_buf, to be turned into
 		// an expression below, and executed at script start-up.
@@ -8160,7 +7665,7 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 
 		item_end += FindNextDelimiter(item_end); // Find the next comma which is not part of the initializer (or find end of string).
 
-												 // Append "ClassNameOrThis.VarName := Initializer, " to the buffer.
+		// Append "ClassNameOrThis.VarName := Initializer, " to the buffer.
 		int chars_written = _sntprintf(buf + buf_used, _countof(buf) - buf_used, _T("%s.%.*s := %.*s, ")
 			, aStatic ? mClassName : _T("this"), (int)name_length, item, (int)(item_end - right_side_of_operator), right_side_of_operator);
 		if (chars_written < 0)
@@ -8177,13 +7682,13 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 		// Above wrote at least one initializer expression into buf.
 		buf[buf_used -= 2] = '\0'; // Remove the final ", "
 
-								   // The following section temporarily replaces mLastLine in order to insert script lines
-								   // either at the end of the list of static initializers (separate from the main script)
-								   // or at the end of the __Init method belonging to this class.  Save the current values:
+		// The following section temporarily replaces mLastLine in order to insert script lines
+		// either at the end of the list of static initializers (separate from the main script)
+		// or at the end of the __Init method belonging to this class.  Save the current values:
 		Line *script_first_line = mFirstLine, *script_last_line = mLastLine;
 		Line *block_end;
 		Func *init_func = NULL;
-
+		
 		if (!aStatic)
 		{
 			ExprTokenType token;
@@ -8192,8 +7697,8 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 			{
 				// __Init method already exists, so find the end of its body.
 				for (block_end = init_func->mJumpToLine;
-					block_end->mActionType != ACT_BLOCK_END || !block_end->mAttribute;
-					block_end = block_end->mNextLine);
+					 block_end->mActionType != ACT_BLOCK_END || !block_end->mAttribute;
+					 block_end = block_end->mNextLine);
 			}
 			else
 			{
@@ -8202,17 +7707,17 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 				if (!DefineFunc(def, NULL) || !AddLine(ACT_BLOCK_BEGIN)
 					|| (class_object->Base() && !ParseAndAddLine(_T("base.__Init()"), ACT_EXPRESSION))) // Initialize base-class variables first. Relies on short-circuit evaluation.
 					return FAIL;
-
+				
 				mLastLine->mLineNumber = 0; // Signal the debugger to skip this line while stepping in/over/out.
 				init_func = g->CurrentFunc;
 				init_func->mDefaultVarType = VAR_DECLARE_GLOBAL; // Allow global variables/class names in initializer expressions.
-
+				
 				if (!AddLine(ACT_BLOCK_END)) // This also resets g->CurrentFunc to NULL.
 					return FAIL;
 				block_end = mLastLine;
 				block_end->mLineNumber = 0; // See above.
-
-											// These must be updated as one or both have changed:
+				
+				// These must be updated as one or both have changed:
 				script_first_line = mFirstLine;
 				script_last_line = mLastLine;
 			}
@@ -8226,7 +7731,7 @@ ResultType Script::DefineClassVars(LPTSTR aBuf, bool aStatic)
 		if (!ParseAndAddLine(buf))
 			return FAIL; // Above already displayed the error.
 		mNoUpdateLabels = false;
-
+		
 		if (aStatic)
 		{
 			mLastLine->mAttribute = (AttributeType)mLastLine->mActionType;
@@ -8261,8 +7766,8 @@ Object *Script::FindClass(LPCTSTR aClassName, size_t aClassNameLength)
 	ExprTokenType token;
 	Object *base_object = NULL;
 	TCHAR class_name[MAX_CLASS_NAME_LENGTH + 2]; // Extra +1 for '.' to simplify parsing.
-
-												 // Make temporary copy which we can modify.
+	
+	// Make temporary copy which we can modify.
 	tmemcpy(class_name, aClassName, aClassNameLength);
 	class_name[aClassNameLength] = '.'; // To simplify parsing.
 	class_name[aClassNameLength + 1] = '\0';
@@ -8274,7 +7779,7 @@ Object *Script::FindClass(LPCTSTR aClassName, size_t aClassNameLength)
 		return NULL;
 
 	// Although at load time only the "Object" type can exist, dynamic_cast is used in case we're called at run-time:
-	if (!(base_var->IsObject() && (base_object = dynamic_cast<Object *>(base_var->Object()))))
+	if (  !(base_var->IsObject() && (base_object = dynamic_cast<Object *>(base_var->Object())))  )
 		return NULL;
 
 	// Even if the loop below has no iterations, it initializes 'key' to the appropriate value:
@@ -8323,7 +7828,7 @@ ResultType Script::ResolveClasses()
 
 
 
-#ifndef AT
+#ifndef AUTOHOTKEYSC
 struct FuncLibrary
 {
 	LPTSTR path;
@@ -8341,22 +7846,22 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 	LPTSTR char_after_last_backslash, terminate_here;
 	DWORD attr;
 
-#define FUNC_LIB_EXT EXT_AT
-#define FUNC_LIB_EXT_LENGTH (_countof(FUNC_LIB_EXT) - 1)
-#define FUNC_LOCAL_LIB _T("\\Lib\\") // Needs leading and trailing backslash.
-#define FUNC_LOCAL_LIB_LENGTH (_countof(FUNC_LOCAL_LIB) - 1)
-#define FUNC_USER_LIB _T("\\AT\\Lib\\") // Needs leading and trailing backslash.
-#define FUNC_USER_LIB_LENGTH (_countof(FUNC_USER_LIB) - 1)
-#define FUNC_STD_LIB _T("Lib\\") // Needs trailing but not leading backslash.
-#define FUNC_STD_LIB_LENGTH (_countof(FUNC_STD_LIB) - 1)
+	#define FUNC_LIB_EXT EXT_AUTOHOTKEY
+	#define FUNC_LIB_EXT_LENGTH (_countof(FUNC_LIB_EXT) - 1)
+	#define FUNC_LOCAL_LIB _T("\\Lib\\") // Needs leading and trailing backslash.
+	#define FUNC_LOCAL_LIB_LENGTH (_countof(FUNC_LOCAL_LIB) - 1)
+	#define FUNC_USER_LIB _T("\\AutoHotkey\\Lib\\") // Needs leading and trailing backslash.
+	#define FUNC_USER_LIB_LENGTH (_countof(FUNC_USER_LIB) - 1)
+	#define FUNC_STD_LIB _T("Lib\\") // Needs trailing but not leading backslash.
+	#define FUNC_STD_LIB_LENGTH (_countof(FUNC_STD_LIB) - 1)
 
-#define FUNC_LIB_COUNT 3
-	static FuncLibrary sLib[FUNC_LIB_COUNT] = { 0 };
+	#define FUNC_LIB_COUNT 3
+	static FuncLibrary sLib[FUNC_LIB_COUNT] = {0};
 
 	if (!sLib[0].path) // Allocate & discover paths only upon first use because many scripts won't use anything from the library. This saves a bit of memory and performance.
 	{
 		for (i = 0; i < FUNC_LIB_COUNT; ++i)
-			if (!(sLib[i].path = (LPTSTR)SimpleHeap::Malloc(MAX_PATH * sizeof(TCHAR)))) // Need MAX_PATH for to allow room for appending each candidate file/function name.
+			if (   !(sLib[i].path = (LPTSTR) SimpleHeap::Malloc(MAX_PATH * sizeof(TCHAR)))   ) // Need MAX_PATH for to allow room for appending each candidate file/function name.
 				return NULL; // Due to rarity, simply pass the failure back to caller.
 
 		FuncLibrary *this_lib;
@@ -8364,7 +7869,7 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 		// DETERMINE PATH TO "LOCAL" LIBRARY:
 		this_lib = sLib; // For convenience and maintainability.
 		this_lib->length = BIV_ScriptDir(NULL, _T(""));
-		if (this_lib->length < MAX_PATH - FUNC_LOCAL_LIB_LENGTH)
+		if (this_lib->length < MAX_PATH-FUNC_LOCAL_LIB_LENGTH)
 		{
 			this_lib->length = BIV_ScriptDir(this_lib->path, _T(""));
 			_tcscpy(this_lib->path + this_lib->length, FUNC_LOCAL_LIB);
@@ -8379,7 +7884,7 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 		// DETERMINE PATH TO "USER" LIBRARY:
 		this_lib++; // For convenience and maintainability.
 		this_lib->length = BIV_MyDocuments(this_lib->path, _T(""));
-		if (this_lib->length < MAX_PATH - FUNC_USER_LIB_LENGTH)
+		if (this_lib->length < MAX_PATH-FUNC_USER_LIB_LENGTH)
 		{
 			_tcscpy(this_lib->path + this_lib->length, FUNC_USER_LIB);
 			this_lib->length += FUNC_USER_LIB_LENGTH;
@@ -8395,7 +7900,7 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 		GetModuleFileName(NULL, this_lib->path, MAX_PATH); // The full path to the currently-running AutoHotkey.exe.
 		char_after_last_backslash = 1 + _tcsrchr(this_lib->path, '\\'); // Should always be found, so failure isn't checked.
 		this_lib->length = (DWORD)(char_after_last_backslash - this_lib->path); // The length up to and including the last backslash.
-		if (this_lib->length < MAX_PATH - FUNC_STD_LIB_LENGTH)
+		if (this_lib->length < MAX_PATH-FUNC_STD_LIB_LENGTH)
 		{
 			_tcscpy(this_lib->path + this_lib->length, FUNC_STD_LIB);
 			this_lib->length += FUNC_STD_LIB_LENGTH;
@@ -8432,9 +7937,9 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 			if (!*sLib[i].path) // Library is marked disabled, so skip it.
 				continue;
 
-			if (sLib[i].length + naked_filename_length >= MAX_PATH - FUNC_LIB_EXT_LENGTH)
+			if (sLib[i].length + naked_filename_length >= MAX_PATH-FUNC_LIB_EXT_LENGTH)
 				continue; // Path too long to match in this library, but try others.
-			dest = (LPTSTR)tmemcpy(sLib[i].path + sLib[i].length, naked_filename, naked_filename_length); // Append the filename to the library path.
+			dest = (LPTSTR) tmemcpy(sLib[i].path + sLib[i].length, naked_filename, naked_filename_length); // Append the filename to the library path.
 			_tcscpy(dest + naked_filename_length, FUNC_LIB_EXT); // Append the file extension.
 
 			attr = GetFileAttributes(sLib[i].path); // Testing confirms that GetFileAttributes() doesn't support wildcards; which is good because we want filenames containing question marks to be "not found" rather than being treated as a match-pattern.
@@ -8443,12 +7948,12 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 
 			aFileWasFound = true; // Indicate success for #include <lib>, which doesn't necessarily expect a function to be found.
 
-								  // Since above didn't "continue", a file exists whose name matches that of the requested function.
-								  // Before loading/including that file, set the working directory to its folder so that if it uses
-								  // #Include, it will be able to use more convenient/intuitive relative paths.  This is similar to
-								  // the "#Include DirName" feature.
-								  // Call SetWorkingDir() vs. SetCurrentDirectory() so that it succeeds even for a root drive like
-								  // C: that lacks a backslash (see SetWorkingDir() for details).
+			// Since above didn't "continue", a file exists whose name matches that of the requested function.
+			// Before loading/including that file, set the working directory to its folder so that if it uses
+			// #Include, it will be able to use more convenient/intuitive relative paths.  This is similar to
+			// the "#Include DirName" feature.
+			// Call SetWorkingDir() vs. SetCurrentDirectory() so that it succeeds even for a root drive like
+			// C: that lacks a backslash (see SetWorkingDir() for details).
 			terminate_here = sLib[i].path + sLib[i].length - 1; // The trailing backslash in the full-path-name to this library.
 			*terminate_here = '\0'; // Temporarily terminate it for use with SetWorkingDir().
 			SetWorkingDir(sLib[i].path); // See similar section in the #Include directive.
@@ -8474,7 +7979,7 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 					, sLib[i].length, sLib[i].path, sLib[i].path);
 				// Now continue on normally so that our caller can continue looking for syntax errors.
 			}
-
+			
 			// Fix for v1.1.06.00: If the file contains any lib #includes, it must be loaded AFTER the
 			// above writes sLib[i].path to the iLib file, otherwise the wrong filename could be written.
 			if (!LoadIncludedFile(sLib[i].path, false, false)) // Fix for v1.0.47.05: Pass false for allow-dupe because otherwise, it's possible for a stdlib file to attempt to include itself (especially via the LibNamePrefix_ method) and thus give a misleading "duplicate function" vs. "func does not exist" error message.  Obsolete: For performance, pass true for allow-dupe so that it doesn't have to check for a duplicate file (seems too rare to worry about duplicates since by definition, the function doesn't yet exist so it's file shouldn't yet be included).
@@ -8488,14 +7993,14 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 			return FindFunc(aFuncName, aFuncNameLength);
 		} // for() each library directory.
 
-		  // Now that the first iteration is done, set up for the second one that searches by class/prefix.
-		  // Notes about ambiguity and naming collisions:
-		  // By the time it gets to the prefix/class search, it's almost given up.  Even if it wrongly finds a
-		  // match in a filename that isn't really a class, it seems inconsequential because at worst it will
-		  // still not find the function and will then say "call to nonexistent function".  In addition, the
-		  // ability to customize which libraries are searched is planned.  This would allow a publicly
-		  // distributed script to turn off all libraries except stdlib.
-		if (!(first_underscore = _tcschr(aFuncName, '_'))) // No second iteration needed.
+		// Now that the first iteration is done, set up for the second one that searches by class/prefix.
+		// Notes about ambiguity and naming collisions:
+		// By the time it gets to the prefix/class search, it's almost given up.  Even if it wrongly finds a
+		// match in a filename that isn't really a class, it seems inconsequential because at worst it will
+		// still not find the function and will then say "call to nonexistent function".  In addition, the
+		// ability to customize which libraries are searched is planned.  This would allow a publicly
+		// distributed script to turn off all libraries except stdlib.
+		if (   !(first_underscore = _tcschr(aFuncName, '_'))   ) // No second iteration needed.
 			break; // All loops are done because second iteration is the last possible attempt.
 		naked_filename_length = first_underscore - aFuncName;
 		if (naked_filename_length >= _countof(class_name_buf)) // Class name too long (probably impossible currently).
@@ -8505,7 +8010,7 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 		naked_filename[naked_filename_length] = '\0';
 	} // 2-iteration for().
 
-	  // Since above didn't return, no match found in any library.
+	// Since above didn't return, no match found in any library.
 	return NULL;
 }
 #endif
@@ -8513,8 +8018,8 @@ Func *Script::FindFuncInLibrary(LPTSTR aFuncName, size_t aFuncNameLength, bool &
 
 
 Func *Script::FindFunc(LPCTSTR aFuncName, size_t aFuncNameLength, int *apInsertPos) // L27: Added apInsertPos for binary-search.
-																					// Returns the Function whose name matches aFuncName (which caller has ensured isn't NULL).
-																					// If it doesn't exist, NULL is returned.
+// Returns the Function whose name matches aFuncName (which caller has ensured isn't NULL).
+// If it doesn't exist, NULL is returned.
 {
 	if (!aFuncNameLength) // Caller didn't specify, so use the entire string.
 		aFuncNameLength = _tcslen(aFuncName);
@@ -8535,7 +8040,7 @@ Func *Script::FindFunc(LPCTSTR aFuncName, size_t aFuncNameLength, int *apInsertP
 	tcslcpy(func_name, aFuncName, aFuncNameLength + 1);  // +1 to convert length to size.
 
 	Func *pfunc;
-
+	
 	// Using a binary searchable array vs a linked list speeds up dynamic function calls, on average.
 	int left, right, mid, result;
 	for (left = 0, right = mFuncCount - 1; left <= right;)
@@ -8596,7 +8101,7 @@ Func *Script::FindFunc(LPCTSTR aFuncName, size_t aFuncNameLength, int *apInsertP
 		else if (!_tcsicmp(suffix, _T("Modify")))
 		{
 			bif = BIF_LV_AddInsertModify; // Although it shares the same function with "Insert", it can still have its own min/max params.
-										  // Leave min_params at 1 so that it can be called like LV_Modify(row, , col1, col2).
+			// Leave min_params at 1 so that it can be called like LV_Modify(row, , col1, col2).
 			max_params = 10000; // An arbitrarily high limit that will never realistically be reached.
 		}
 		else if (!_tcsicmp(suffix, _T("Delete")))
@@ -8860,11 +8365,11 @@ Func *Script::FindFunc(LPCTSTR aFuncName, size_t aFuncNameLength, int *apInsertP
 	{
 		bif = BIF_OnMessage;
 		max_params = 3;  // Leave min at 1.
-						 // By design, scripts that use OnMessage are persistent by default.  Doing this here
-						 // also allows WinMain() to later detect whether this script should become #SingleInstance.
-						 // Note: Don't directly change g_AllowOnlyOneInstance here in case the remainder of the
-						 // script-loading process comes across any explicit uses of #SingleInstance, which would
-						 // override the default set here.
+		// By design, scripts that use OnMessage are persistent by default.  Doing this here
+		// also allows WinMain() to later detect whether this script should become #SingleInstance.
+		// Note: Don't directly change g_AllowOnlyOneInstance here in case the remainder of the
+		// script-loading process comes across any explicit uses of #SingleInstance, which would
+		// override the default set here.
 		g_persistent = true;
 	}
 	else if (!_tcsicmp(func_name, _T("OnExit")) || !_tcsicmp(func_name, _T("OnClipboardChange")))
@@ -8903,23 +8408,23 @@ Func *Script::FindFunc(LPCTSTR aFuncName, size_t aFuncNameLength, int *apInsertP
 		}
 		// All of these functions require the "object" parameter,
 		// but it is excluded from the counts below for clarity:
-		BIF_OBJ_CASE(Insert, 1, 10000) // [key,] value [, value2, ...]
-			BIF_OBJ_CASE(InsertAt, 2, 10000) // index, value [, value2, ...]
-			BIF_OBJ_CASE(Push, 1, 10000)
-			BIF_OBJ_CASE(Delete, 1, 2) // min_key [, max_key]
-			BIF_OBJ_CASE(Remove, 0, 2) // [min_key, max_key]
-			BIF_OBJ_CASE(RemoveAt, 1, 2) // position [, count]
-			BIF_OBJ_CASE(Pop, 0, 0)
-			BIF_OBJ_CASE(Length, 0, 0)
-			BIF_OBJ_CASE(MinIndex, 0, 0)
-			BIF_OBJ_CASE(MaxIndex, 0, 0)
-			BIF_OBJ_CASE(HasKey, 1, 1) // key
-			BIF_OBJ_CASE(GetCapacity, 0, 1) // [key]
-			BIF_OBJ_CASE(SetCapacity, 1, 2) // [key,] new_capacity
-			BIF_OBJ_CASE(GetAddress, 1, 1) // key
-			BIF_OBJ_CASE(NewEnum, 0, 0)
-			BIF_OBJ_CASE(Clone, 0, 0)
-			BIF_OBJ_CASE(BindMethod, 1, 10000) // obj, method [, param...]
+		BIF_OBJ_CASE(Insert,		1, 10000) // [key,] value [, value2, ...]
+		BIF_OBJ_CASE(InsertAt,		2, 10000) // index, value [, value2, ...]
+		BIF_OBJ_CASE(Push,			1, 10000)
+		BIF_OBJ_CASE(Delete, 		1, 2) // min_key [, max_key]
+		BIF_OBJ_CASE(Remove, 		0, 2) // [min_key, max_key]
+		BIF_OBJ_CASE(RemoveAt,      1, 2) // position [, count]
+		BIF_OBJ_CASE(Pop,			0, 0)
+		BIF_OBJ_CASE(Length, 		0, 0)
+		BIF_OBJ_CASE(MinIndex, 		0, 0)
+		BIF_OBJ_CASE(MaxIndex, 		0, 0)
+		BIF_OBJ_CASE(HasKey,		1, 1) // key
+		BIF_OBJ_CASE(GetCapacity,	0, 1) // [key]
+		BIF_OBJ_CASE(SetCapacity,	1, 2) // [key,] new_capacity
+		BIF_OBJ_CASE(GetAddress,	1, 1) // key
+		BIF_OBJ_CASE(NewEnum,		0, 0)
+		BIF_OBJ_CASE(Clone,			0, 0)
+		BIF_OBJ_CASE(BindMethod,	1, 10000) // obj, method [, param...]
 #undef BIF_OBJ_CASE
 		else if (!_tcsicmp(suffix, _T("AddRef")) || !_tcsicmp(suffix, _T("Release")))
 			bif = BIF_ObjAddRefRelease;
@@ -8946,14 +8451,14 @@ Func *Script::FindFunc(LPCTSTR aFuncName, size_t aFuncNameLength, int *apInsertP
 	else if (!_tcsnicmp(func_name, _T("ComObj"), 6))
 	{
 		suffix = func_name + 6;
-		if (!_tcsicmp(suffix, _T("Create")))
+		if	(!_tcsicmp(suffix, _T("Create")))
 		{
 			bif = BIF_ComObjCreate;
 			max_params = 2;
 		}
-		else if (!_tcsicmp(suffix, _T("Get")))
+		else if	(!_tcsicmp(suffix, _T("Get")))
 			bif = BIF_ComObjGet;
-		else if (!_tcsicmp(suffix, _T("Connect")))
+		else if	(!_tcsicmp(suffix, _T("Connect")))
 		{
 			bif = BIF_ComObjConnect;
 			max_params = 2;
@@ -9014,9 +8519,9 @@ Func *Script::FindFunc(LPCTSTR aFuncName, size_t aFuncNameLength, int *apInsertP
 	else
 		return NULL; // Maint: There may be other lines above that also return NULL.
 
-					 // Since above didn't return, this is a built-in function that hasn't yet been added to the list.
-					 // Add it now:
-	if (!(pfunc = AddFunc(func_name, aFuncNameLength, true, left))) // L27: left contains the position within mFunc to insert the function.  Cannot use *apInsertPos as caller may have omitted it or passed NULL.
+	// Since above didn't return, this is a built-in function that hasn't yet been added to the list.
+	// Add it now:
+	if (   !(pfunc = AddFunc(func_name, aFuncNameLength, true, left))   ) // L27: left contains the position within mFunc to insert the function.  Cannot use *apInsertPos as caller may have omitted it or passed NULL.
 		return NULL;
 
 	pfunc->mBIF = bif;
@@ -9047,15 +8552,15 @@ Func *Script::AddFunc(LPCTSTR aFuncName, size_t aFuncNameLength, bool aIsBuiltIn
 	TCHAR func_name[MAX_VAR_NAME_LENGTH + 1];
 	tcslcpy(func_name, aFuncName, aFuncNameLength + 1);  // See explanation above.  +1 to convert length to size.
 
-														 // In the future, it might be best to add another check here to disallow function names that consist
-														 // entirely of numbers.  However, this hasn't been done yet because:
-														 // 1) Not sure if there will ever be a good enough reason.
-														 // 2) Even if it's done in the far future, it won't break many scripts (pure-numeric functions should be very rare).
-														 // 3) Those scripts that are broken are not broken in a bad way because the pre-parser will generate a
-														 //    load-time error, which is easy to fix (unlike runtime errors, which require that part of the script
-														 //    to actually execute).
+	// In the future, it might be best to add another check here to disallow function names that consist
+	// entirely of numbers.  However, this hasn't been done yet because:
+	// 1) Not sure if there will ever be a good enough reason.
+	// 2) Even if it's done in the far future, it won't break many scripts (pure-numeric functions should be very rare).
+	// 3) Those scripts that are broken are not broken in a bad way because the pre-parser will generate a
+	//    load-time error, which is easy to fix (unlike runtime errors, which require that part of the script
+	//    to actually execute).
 	if (!aClassObject && !Var::ValidateName(func_name, DISPLAY_FUNC_ERROR))  // Variable and function names are both validated the same way.
-																			 // Above already displayed error for us.  This can happen at loadtime or runtime (e.g. StringSplit).
+		// Above already displayed error for us.  This can happen at loadtime or runtime (e.g. StringSplit).
 		return NULL;
 
 	// Allocate some dynamic memory to pass to the constructor:
@@ -9097,7 +8602,7 @@ Func *Script::AddFunc(LPCTSTR aFuncName, size_t aFuncNameLength, bool aIsBuiltIn
 		// Also add it to the script's list of functions, to support #Warn LocalSameAsGlobal
 		// and automatic cleanup of objects in static vars on program exit.
 	}
-
+	
 	if (mFuncCount == mFuncCountMax)
 	{
 		// Allocate or expand function list.
@@ -9141,22 +8646,22 @@ size_t Line::ArgIndexLength(int aArgIndex)
 #endif
 	if (aArgIndex >= mArgc) // Arg doesn't exist, so don't try accessing sArgVar (unlike sArgDeref, it wouldn't be valid to do so).
 		return 0; // i.e. treat it as the empty string.
-				  // The length is not known and must be calculated in the following situations:
-				  // - The arg consists of more than just a single isolated variable name (not possible if the arg is
-				  //   ARG_TYPE_INPUT_VAR).
-				  // - The arg is a built-in variable, in which case the length isn't known, so it must be derived from
-				  //   the string copied into sArgDeref[] by an earlier stage.
-				  // - The arg is a normal variable but it's VAR_ATTRIB_BINARY_CLIP. In such cases, our callers do not
-				  //   recognize/support binary-clipboard as binary and want the apparent length of the string returned
-				  //   (i.e. _tcslen(), which takes into account the position of the first binary zero wherever it may be).
+	// The length is not known and must be calculated in the following situations:
+	// - The arg consists of more than just a single isolated variable name (not possible if the arg is
+	//   ARG_TYPE_INPUT_VAR).
+	// - The arg is a built-in variable, in which case the length isn't known, so it must be derived from
+	//   the string copied into sArgDeref[] by an earlier stage.
+	// - The arg is a normal variable but it's VAR_ATTRIB_BINARY_CLIP. In such cases, our callers do not
+	//   recognize/support binary-clipboard as binary and want the apparent length of the string returned
+	//   (i.e. _tcslen(), which takes into account the position of the first binary zero wherever it may be).
 	if (sArgVar[aArgIndex])
 	{
 		Var &var = *sArgVar[aArgIndex]; // For performance and convenience.
-		if (var.Type() == VAR_NORMAL  // This and below ordered for short-circuit performance based on types of input expected from caller.
+		if (   var.Type() == VAR_NORMAL  // This and below ordered for short-circuit performance based on types of input expected from caller.
 			&& !(g_act[mActionType].MaxParamsAu2WithHighBit & 0x80) // Although the ones that have the highbit set are hereby omitted from the fast method, the nature of almost all of the highbit commands is such that their performance won't be measurably affected. See ArgMustBeDereferenced() for more info.
 			&& (g_NoEnv || var.HasContents()) // v1.0.46.02: Recognize environment variables (when g_NoEnv==FALSE) by falling through to _tcslen() for them.
-			&& &var != g_ErrorLevel) // Mostly for maintainability because the following situation is very rare: If it's g_ErrorLevel, use the deref version instead because if g_ErrorLevel is an input variable in the caller's command, and the caller changes ErrorLevel (such as to set a default) prior to calling this function, the changed/new ErrorLevel will be used rather than its original value (which is usually undesirable).
-									 //&& !var.IsBinaryClip())  // This check isn't necessary because the line below handles it.
+			&& &var != g_ErrorLevel   ) // Mostly for maintainability because the following situation is very rare: If it's g_ErrorLevel, use the deref version instead because if g_ErrorLevel is an input variable in the caller's command, and the caller changes ErrorLevel (such as to set a default) prior to calling this function, the changed/new ErrorLevel will be used rather than its original value (which is usually undesirable).
+			//&& !var.IsBinaryClip())  // This check isn't necessary because the line below handles it.
 			return var.LengthIgnoreBinaryClip(); // Do it the fast way (unless it's binary clipboard, in which case this call will internally call _tcslen()).
 	}
 	// Otherwise, length isn't known due to no variable, a built-in variable, or an environment variable.
@@ -9180,15 +8685,15 @@ __int64 Line::ArgIndexToInt64(int aArgIndex)
 #endif
 	if (aArgIndex >= mArgc) // See ArgIndexLength() for comments.
 		return 0; // i.e. treat it as ATOI64("").
-				  // SEE THIS POSITION IN ArgIndexLength() FOR IMPORTANT COMMENTS ABOUT THE BELOW.
+	// SEE THIS POSITION IN ArgIndexLength() FOR IMPORTANT COMMENTS ABOUT THE BELOW.
 	if (sArgVar[aArgIndex])
 	{
 		Var &var = *sArgVar[aArgIndex];
-		if (var.Type() == VAR_NORMAL  // See ArgIndexLength() for comments about this line and below.
+		if (   var.Type() == VAR_NORMAL  // See ArgIndexLength() for comments about this line and below.
 			&& !(g_act[mActionType].MaxParamsAu2WithHighBit & 0x80)
 			&& (g_NoEnv || var.HasContents())
 			&& &var != g_ErrorLevel
-			&& !var.IsBinaryClip())
+			&& !var.IsBinaryClip()   )
 			return var.ToInt64(FALSE);
 	}
 	// Otherwise:
@@ -9211,15 +8716,15 @@ double Line::ArgIndexToDouble(int aArgIndex)
 #endif
 	if (aArgIndex >= mArgc) // See ArgIndexLength() for comments.
 		return 0.0; // i.e. treat it as ATOF("").
-					// SEE THIS POSITION IN ARGLENGTH() FOR IMPORTANT COMMENTS ABOUT THE BELOW.
+	// SEE THIS POSITION IN ARGLENGTH() FOR IMPORTANT COMMENTS ABOUT THE BELOW.
 	if (sArgVar[aArgIndex])
 	{
 		Var &var = *sArgVar[aArgIndex];
-		if (var.Type() == VAR_NORMAL  // See ArgIndexLength() for comments about this line and below.
+		if (   var.Type() == VAR_NORMAL  // See ArgIndexLength() for comments about this line and below.
 			&& !(g_act[mActionType].MaxParamsAu2WithHighBit & 0x80)
 			&& (g_NoEnv || var.HasContents())
 			&& &var != g_ErrorLevel
-			&& !var.IsBinaryClip())
+			&& !var.IsBinaryClip()   )
 			return var.ToDouble(FALSE);
 	}
 	// Otherwise:
@@ -9248,30 +8753,30 @@ Var *Line::ResolveVarOfArg(int aArgIndex, bool aCreateIfNecessary)
 		return NULL;
 	ArgStruct &this_arg = mArg[aArgIndex]; // For performance and convenience.
 
-										   // Since this function isn't inline (since it's called so frequently), there isn't that much more
-										   // overhead to doing this check, even though it shouldn't be needed since it's the caller's
-										   // responsibility:
+	// Since this function isn't inline (since it's called so frequently), there isn't that much more
+	// overhead to doing this check, even though it shouldn't be needed since it's the caller's
+	// responsibility:
 	if (this_arg.type == ARG_TYPE_NORMAL) // Arg isn't an input or output variable.
 		return NULL;
 	if (!*this_arg.text) // The arg's variable is not one that needs to be dynamically resolved.
 		return VAR(this_arg); // Return the var's address that was already determined at load-time.
-							  // The above might return NULL in the case where the arg is optional (i.e. the command allows
-							  // the var name to be omitted).  But in that case, the caller should either never have called this
-							  // function or should check for NULL upon return.  UPDATE: This actually never happens, see
-							  // comment above the "if (aArgIndex >= mArgc)" line.
+	// The above might return NULL in the case where the arg is optional (i.e. the command allows
+	// the var name to be omitted).  But in that case, the caller should either never have called this
+	// function or should check for NULL upon return.  UPDATE: This actually never happens, see
+	// comment above the "if (aArgIndex >= mArgc)" line.
 
-							  // Static to correspond to the static empty_var further below.  It needs the memory area
-							  // to support resolving dynamic environment variables.  In the following example,
-							  // the result will be blank unless the first line is present (without this fix here):
-							  //null = %SystemRoot%  ; bogus line as a required workaround in versions prior to v1.0.16
-							  //thing = SystemRoot
-							  //StringTrimLeft, output, %thing%, 0
-							  //msgbox %output%
+	// Static to correspond to the static empty_var further below.  It needs the memory area
+	// to support resolving dynamic environment variables.  In the following example,
+	// the result will be blank unless the first line is present (without this fix here):
+	//null = %SystemRoot%  ; bogus line as a required workaround in versions prior to v1.0.16
+	//thing = SystemRoot
+	//StringTrimLeft, output, %thing%, 0
+	//msgbox %output%
 
 	static TCHAR sVarName[MAX_VAR_NAME_LENGTH + 1];  // Will hold the dynamically built name.
 
-													 // At this point, we know the requested arg is a variable that must be dynamically resolved.
-													 // This section is similar to that in ExpandArg(), so they should be maintained together:
+	// At this point, we know the requested arg is a variable that must be dynamically resolved.
+	// This section is similar to that in ExpandArg(), so they should be maintained together:
 	LPTSTR pText = this_arg.text; // Start at the beginning of this arg's text.
 	size_t var_name_length = 0;
 
@@ -9291,7 +8796,7 @@ Var *Line::ResolveVarOfArg(int aArgIndex, bool aCreateIfNecessary)
 				// people who should know what they're doing.  In any case, when the caller of this
 				// function called it to resolve an output variable, it will see the the result is
 				// NULL and terminate the current subroutine.
-#define DYNAMIC_TOO_LONG _T("This dynamically built variable name is too long.") \
+				#define DYNAMIC_TOO_LONG _T("This dynamically built variable name is too long.") \
 					_T("  If this variable was not intended to be dynamic, remove the % symbols from it.")
 				LineError(DYNAMIC_TOO_LONG, FAIL, this_arg.text);
 				return NULL;
@@ -9318,7 +8823,7 @@ Var *Line::ResolveVarOfArg(int aArgIndex, bool aCreateIfNecessary)
 		LineError(DYNAMIC_TOO_LONG, FAIL, this_arg.text);
 		return NULL;
 	}
-
+	
 	if (!var_name_length)
 	{
 		LineError(_T("This dynamic variable is blank. If this variable was not intended to be dynamic,")
@@ -9354,7 +8859,7 @@ Var *Line::ResolveVarOfArg(int aArgIndex, bool aCreateIfNecessary)
 	}
 	// Otherwise, aCreateIfNecessary is true or we want to create this variable unconditionally for the
 	// reason described above.
-	if (!(found_var = g_script.FindOrAddVar(sVarName, var_name_length)))
+	if (   !(found_var = g_script.FindOrAddVar(sVarName, var_name_length))   )
 		return NULL;  // Above will already have displayed the error.
 	if (this_arg.type == ARG_TYPE_OUTPUT_VAR && VAR_IS_READONLY(*found_var))
 	{
@@ -9388,12 +8893,12 @@ Var *Script::FindOrAddVar(LPTSTR aVarName, size_t aVarNameLength, int aScope)
 
 Var *Script::FindVar(LPTSTR aVarName, size_t aVarNameLength, int *apInsertPos, int aScope
 	, bool *apIsLocal)
-	// Caller has ensured that aVarName isn't NULL.  It must also ignore the contents of apInsertPos when
-	// a match (non-NULL value) is returned.
-	// Returns the Var whose name matches aVarName.  If it doesn't exist, NULL is returned.
-	// If caller provided a non-NULL apInsertPos, it will be given a the array index that a newly
-	// inserted item should have to keep the list in sorted order (which also allows the ListVars command
-	// to display the variables in alphabetical order).
+// Caller has ensured that aVarName isn't NULL.  It must also ignore the contents of apInsertPos when
+// a match (non-NULL value) is returned.
+// Returns the Var whose name matches aVarName.  If it doesn't exist, NULL is returned.
+// If caller provided a non-NULL apInsertPos, it will be given a the array index that a newly
+// inserted item should have to keep the list in sorted order (which also allows the ListVars command
+// to display the variables in alphabetical order).
 {
 	if (!*aVarName)
 		return NULL;
@@ -9480,7 +8985,7 @@ Var *Script::FindVar(LPTSTR aVarName, size_t aVarNameLength, int *apInsertPos, i
 	// Set the output parameter, if present:
 	if (apInsertPos) // Caller wants this value even if we'll be resorting to searching the global list below.
 		*apInsertPos = left; // This is the index a newly inserted item should have to keep alphabetical order.
-
+	
 	if (apIsLocal) // Its purpose is to inform caller of type it would have been in case we don't find a match.
 		*apIsLocal = search_local;
 
@@ -9548,7 +9053,7 @@ Var *Script::AddVar(LPTSTR aVarName, size_t aVarNameLength, int aInsertPos, int 
 	VarEntry *builtin = GetBuiltInVar(var_name);
 	if (aIsLocal && (builtin || !_tcsicmp(var_name, _T("ErrorLevel")))) // Attempt to create built-in variable as local.
 	{
-		if (!(aScope & VAR_LOCAL_FUNCPARAM)) // It's not a UDF's parameter, so fall back to the global built-in variable of this name rather than displaying an error.
+		if (  !(aScope & VAR_LOCAL_FUNCPARAM)  ) // It's not a UDF's parameter, so fall back to the global built-in variable of this name rather than displaying an error.
 			return FindOrAddVar(var_name, aVarNameLength, FINDVAR_GLOBAL); // Force find-or-create of global.
 		else // (aIsLocal & VAR_LOCAL_FUNCPARAM), which means "this is a local variable and a function's parameter".
 		{
@@ -9596,7 +9101,7 @@ Var *Script::AddVar(LPTSTR aVarName, size_t aVarNameLength, int aInsertPos, int 
 		// gains 20%, and to 4000 only gains an addition 10%.  Therefore, to conserve memory in functions that
 		// have so many variables that the lazy list is used, a good trade-off seems to be 2000 (8 KB of memory)
 		// per function that needs it.
-#define MAX_LAZY_VARS 2000 // Don't make this larger than 90000 without altering the incremental increase of alloc_count further below.
+		#define MAX_LAZY_VARS 2000 // Don't make this larger than 90000 without altering the incremental increase of alloc_count further below.
 		if (lazy_var_count < MAX_LAZY_VARS) // The lazy list hasn't yet reached capacity, so no need to merge it into the main list.
 			return the_new_var;
 	}
@@ -9631,7 +9136,7 @@ Var *Script::AddVar(LPTSTR aVarName, size_t aVarNameLength, int aInsertPos, int 
 			// This is also the threshold beyond which the lazy list is used to accelerate performance.
 			// Create the permanent lazy list:
 			Var **&lazy_var = aIsLocal ? g->CurrentFunc->mLazyVar : mLazyVar;
-			if (!(lazy_var = (Var **)malloc(MAX_LAZY_VARS * sizeof(Var *))))
+			if (   !(lazy_var = (Var **)malloc(MAX_LAZY_VARS * sizeof(Var *)))   )
 			{
 				ScriptError(ERR_OUTOFMEM);
 				return NULL;
@@ -9706,7 +9211,7 @@ Var *Script::AddVar(LPTSTR aVarName, size_t aVarNameLength, int aInsertPos, int 
 		var[var_count++] = lazy_var[j];
 	lazy_var_count = i + 1; // The number of items that remain after moving out those that qualified.
 
-							// This will have zero iterations if the above already moved them all:
+	// This will have zero iterations if the above already moved them all:
 	for (insert_pos = var + var_count, i = lazy_var_count - 1; i > -1; --i)
 	{
 		// Modified binary search that relies on the fact that caller has ensured a match will never
@@ -9794,7 +9299,7 @@ WinGroup *Script::FindGroup(LPTSTR aGroupName, bool aCreateIfNotFound)
 	for (WinGroup *group = mFirstGroup; group != NULL; group = group->mNextGroup)
 		if (!_tcsicmp(group->mName, aGroupName)) // lstrcmpi() is not used: 1) avoids breaking existing scripts; 2) provides consistent behavior across multiple locales; 3) performance.
 			return group; // Match found.
-						  // Otherwise, no match found, so create a new group.
+	// Otherwise, no match found, so create a new group.
 	if (!aCreateIfNotFound || AddGroup(aGroupName) != OK)
 		return NULL;
 	return mLastGroup;
@@ -9819,9 +9324,9 @@ ResultType Script::AddGroup(LPTSTR aGroupName)
 	if (!new_name)
 		return FAIL;  // It already displayed the error for us.
 
-					  // The precise method by which the follows steps are done should be thread-safe even if
-					  // some other thread calls FindGroup() in the middle of the operation.  But any changes
-					  // must be carefully reviewed:
+	// The precise method by which the follows steps are done should be thread-safe even if
+	// some other thread calls FindGroup() in the middle of the operation.  But any changes
+	// must be carefully reviewed:
 	WinGroup *the_new_group = new WinGroup(new_name);
 	if (the_new_group == NULL)
 		return ScriptError(ERR_OUTOFMEM);
@@ -9847,33 +9352,33 @@ ResultType Script::PreparseExpressions(Line *aStartingLine)
 		for (i = 0; i < line->mArgc; ++i) // For each arg.
 		{
 			ArgStruct &this_arg = line->mArg[i]; // For performance and convenience.
-												 // Exclude the derefs of output and input vars from consideration, since they can't
-												 // be function calls:
+			// Exclude the derefs of output and input vars from consideration, since they can't
+			// be function calls:
 			if (!this_arg.is_expression) // For now, only expressions are capable of calling functions. If ever change this, might want to add a check here for this_arg.type != ARG_TYPE_NORMAL (for performance).
 				continue;
 			if (this_arg.deref) // No derefs are present because the expression contains neither variables nor function calls.
 			{
-				for (deref = this_arg.deref; deref->marker; ++deref) // For each deref.
+			for (deref = this_arg.deref; deref->marker; ++deref) // For each deref.
+			{
+				if (!deref->is_function)
+					continue;
+				if (   !(deref->func = FindFunc(deref->marker, deref->length))   )
 				{
-					if (!deref->is_function)
-						continue;
-					if (!(deref->func = FindFunc(deref->marker, deref->length)))
+#ifndef AUTOHOTKEYSC
+					bool error_was_shown, file_was_found;
+					if (   !(deref->func = FindFuncInLibrary(deref->marker, deref->length, error_was_shown, file_was_found, true))   )
 					{
-#ifndef AT
-						bool error_was_shown, file_was_found;
-						if (!(deref->func = FindFuncInLibrary(deref->marker, deref->length, error_was_shown, file_was_found, true)))
-						{
-							// When above already displayed the proximate cause of the error, it's usually
-							// undesirable to show the cascade effects of that error in a second dialog:
-							return error_was_shown ? FAIL : line->LineError(ERR_NONEXISTENT_FUNCTION, FAIL, deref->marker);
-						}
-#else
-						return line->LineError(ERR_NONEXISTENT_FUNCTION, FAIL, deref->marker);
-#endif
+						// When above already displayed the proximate cause of the error, it's usually
+						// undesirable to show the cascade effects of that error in a second dialog:
+						return error_was_shown ? FAIL : line->LineError(ERR_NONEXISTENT_FUNCTION, FAIL, deref->marker);
 					}
-					// L31: Parameter counting and validation was previously done in this section,
-					//		but is now handled by ExpressionToPostfix.
-				} // for each deref of this arg
+#else
+					return line->LineError(ERR_NONEXISTENT_FUNCTION, FAIL, deref->marker);
+#endif
+				}
+				// L31: Parameter counting and validation was previously done in this section,
+				//		but is now handled by ExpressionToPostfix.
+			} // for each deref of this arg
 			} // if (this_arg.deref)
 			if (!line->ExpressionToPostfix(this_arg)) // At this stage, this_arg.is_expression is known to be true. Doing this here, after the script has been loaded, might improve the compactness/adjacent-ness of the compiled expressions in memory, which might improve performance due to CPU caching.
 				return FAIL; // The function above already displayed the error msg.
@@ -9911,7 +9416,7 @@ ResultType Script::PreparseStaticLines(Line *aStartingLine)
 			mLastStaticLine = line;
 			break;
 		case ACT_HOTKEY_IF:
-			// It's already been added to the hot-expr list, so just remove it from the script (below).
+			// It's already been added to g_HotExprLines[], so just remove it from the script (below).
 			// Override mActionType so ACT_HOTKEY_IF doesn't have to be handled by EvaluateCondition():
 			line->mActionType = ACT_IFEXPR;
 			break;
@@ -9958,38 +9463,38 @@ Line *Script::PreparseBlocks(Line *aStartingLine, ExecUntilMode aMode, Line *aPa
 			}
 
 			line_temp = line->mNextLine;  // line_temp is now this IF's or LOOP's or TRY's action-line.
-										  // The following is commented out because all scripts end in ACT_EXIT:
-										  //if (line_temp == NULL) // This is an orphan IF/LOOP (has no action-line) at the end of the script.
-										  //	return line->PreparseError(_T("Q")); // Placeholder. Formerly "This if-statement or loop has no action."
+			// The following is commented out because all scripts end in ACT_EXIT:
+			//if (line_temp == NULL) // This is an orphan IF/LOOP (has no action-line) at the end of the script.
+			//	return line->PreparseError(_T("Q")); // Placeholder. Formerly "This if-statement or loop has no action."
 
-										  // Checks such as the following are omitted because any such errors are detected automatically
-										  // by recursion into this function; i.e. if this IF/LOOP/TRY's action is an ELSE, it will be
-										  // detected as having no associated IF.
-										  //#define IS_BAD_ACTION_LINE_TYPE(act) ((act) == ACT_ELSE || (act) == ACT_BLOCK_END || (act) == ACT_CATCH || (act) == ACT_FINALLY)
-										  //#define IS_BAD_ACTION_LINE(l) IS_BAD_ACTION_LINE_TYPE((l)->mActionType)
-										  //if (IS_BAD_ACTION_LINE(line_temp))
-										  //	return line->PreparseError(ERR_EXPECTED_BLOCK_OR_ACTION);
+			// Checks such as the following are omitted because any such errors are detected automatically
+			// by recursion into this function; i.e. if this IF/LOOP/TRY's action is an ELSE, it will be
+			// detected as having no associated IF.
+			//#define IS_BAD_ACTION_LINE_TYPE(act) ((act) == ACT_ELSE || (act) == ACT_BLOCK_END || (act) == ACT_CATCH || (act) == ACT_FINALLY)
+			//#define IS_BAD_ACTION_LINE(l) IS_BAD_ACTION_LINE_TYPE((l)->mActionType)
+			//if (IS_BAD_ACTION_LINE(line_temp))
+			//	return line->PreparseError(ERR_EXPECTED_BLOCK_OR_ACTION);
 
-										  // Lexikos: This section once maintained separate variables for file-pattern, registry, file-reading
-										  // and parsing loops. The intention seemed to be to validate certain commands such as FileAppend
-										  // differently depending on whether they're contained within a qualifying type of loop (even if some
-										  // other type of loop lies in between). However, that validation apparently wasn't implemented,
-										  // and implementing it now seems unnecessary. Doing so would also remove a useful capability:
-										  //
-										  //	Loop, Read, %InputFile%, %OutputFile%
-										  //	{
-										  //		MyFunc(A_LoopReadLine)
-										  //	}
-										  //	MyFunc(line) {
-										  //		... do some processing on %line% ...
-										  //		FileAppend, %line%	; This line could be considered an error, though it works in practice.
-										  //	}
-										  //
+			// Lexikos: This section once maintained separate variables for file-pattern, registry, file-reading
+			// and parsing loops. The intention seemed to be to validate certain commands such as FileAppend
+			// differently depending on whether they're contained within a qualifying type of loop (even if some
+			// other type of loop lies in between). However, that validation apparently wasn't implemented,
+			// and implementing it now seems unnecessary. Doing so would also remove a useful capability:
+			//
+			//	Loop, Read, %InputFile%, %OutputFile%
+			//	{
+			//		MyFunc(A_LoopReadLine)
+			//	}
+			//	MyFunc(line) {
+			//		... do some processing on %line% ...
+			//		FileAppend, %line%	; This line could be considered an error, though it works in practice.
+			//	}
+			//
 
-										  // Recurse to group the line or lines which are this line's action or body as a
-										  // single entity and find the line below it.  This must be done even if line_temp
-										  // isn't an IF/ELSE/LOOP/BLOCK_BEGIN because all lines need mParentLine set by this
-										  // function, and some other types such as BREAK/CONTINUE also need special handling.
+			// Recurse to group the line or lines which are this line's action or body as a
+			// single entity and find the line below it.  This must be done even if line_temp
+			// isn't an IF/ELSE/LOOP/BLOCK_BEGIN because all lines need mParentLine set by this
+			// function, and some other types such as BREAK/CONTINUE also need special handling.
 			line_temp = PreparseBlocks(line_temp, ONLY_ONE_LINE, line, line->mAttribute ? line->mAttribute : aLoopType);
 			// If not an error, line_temp is now either:
 			// 1) If this if's/loop's action was a BEGIN_BLOCK: The line after the end of the block.
@@ -10005,22 +9510,22 @@ Line *Script::PreparseBlocks(Line *aStartingLine, ExecUntilMode aMode, Line *aPa
 			if (line_temp == NULL)
 				return NULL; // Error.
 
-							 // Set this line's mRelatedLine to the line after its action/body.  For an IF,
-							 // this is the line to which we jump at runtime when the IF is finished (whether
-							 // it's condition was true or false), thus skipping over any nested IF's that
-							 // aren't in blocks beneath it.  If there's no ELSE, the below value serves as
-							 // the jumppoint we go to when the if-statement is finished.  Example:
-							 // if x
-							 //   if y
-							 //     if z
-							 //       action1
-							 //     else
-							 //       action2
-							 // action3
-							 // x's jumppoint should be action3 so that all the nested if's under the
-							 // first one can be skipped after the "if x" line is recursively evaluated.
-							 // Because of this behavior (and the fact that all scripts end in ACT_EXIT),
-							 // all IFs will have a related line.
+			// Set this line's mRelatedLine to the line after its action/body.  For an IF,
+			// this is the line to which we jump at runtime when the IF is finished (whether
+			// it's condition was true or false), thus skipping over any nested IF's that
+			// aren't in blocks beneath it.  If there's no ELSE, the below value serves as
+			// the jumppoint we go to when the if-statement is finished.  Example:
+			// if x
+			//   if y
+			//     if z
+			//       action1
+			//     else
+			//       action2
+			// action3
+			// x's jumppoint should be action3 so that all the nested if's under the
+			// first one can be skipped after the "if x" line is recursively evaluated.
+			// Because of this behavior (and the fact that all scripts end in ACT_EXIT),
+			// all IFs will have a related line.
 			line->mRelatedLine = line_temp;
 
 			// Even if aMode == ONLY_ONE_LINE, an IF and its ELSE count as a single
@@ -10049,19 +9554,19 @@ Line *Script::PreparseBlocks(Line *aStartingLine, ExecUntilMode aMode, Line *aPa
 				// by the next iteration in case this is a TRY..CATCH and line_temp is FINALLY.
 				line = line_temp; // ELSE/CATCH/FINALLY
 				line_temp = line->mNextLine; // line's action/body.
-											 // The following case should be impossible because all scripts end in ACT_EXIT.
-											 // Thus, it's commented out:
-											 //if (line_temp == NULL) // An else with no action.
-											 //	return line->PreparseError(_T("This ELSE has no action."));
-											 //if (IS_BAD_ACTION_LINE(line_temp)) // See "#define IS_BAD_ACTION_LINE" for comments.
-											 //	return line->PreparseError(ERR_EXPECTED_BLOCK_OR_ACTION);
-											 // Assign to line_temp rather than line:
+				// The following case should be impossible because all scripts end in ACT_EXIT.
+				// Thus, it's commented out:
+				//if (line_temp == NULL) // An else with no action.
+				//	return line->PreparseError(_T("This ELSE has no action."));
+				//if (IS_BAD_ACTION_LINE(line_temp)) // See "#define IS_BAD_ACTION_LINE" for comments.
+				//	return line->PreparseError(ERR_EXPECTED_BLOCK_OR_ACTION);
+				// Assign to line_temp rather than line:
 				line_temp = PreparseBlocks(line_temp, ONLY_ONE_LINE, line
 					, line->mActionType == ACT_FINALLY ? ATTR_OBSCURE(aLoopType) : aLoopType);
 				if (line_temp == NULL)
 					return NULL; // Error.
-								 // Set this ELSE/CATCH/FINALLY's jumppoint.  This is similar to the jumppoint
-								 // set for an IF/LOOP/TRY, so see related comments above:
+				// Set this ELSE/CATCH/FINALLY's jumppoint.  This is similar to the jumppoint
+				// set for an IF/LOOP/TRY, so see related comments above:
 				line->mRelatedLine = line_temp;
 			}
 			if (line_temp->mActionType == ACT_UNTIL
@@ -10084,21 +9589,21 @@ Line *Script::PreparseBlocks(Line *aStartingLine, ExecUntilMode aMode, Line *aPa
 			continue;
 		} // ActionType is IF/LOOP/TRY.
 
-		  // Since above didn't continue, do the switch:
+		// Since above didn't continue, do the switch:
 		switch (line->mActionType)
 		{
 		case ACT_BLOCK_BEGIN:
 			if (line->mAttribute == ATTR_TRUE) // This is the opening brace of a function definition.
 			{
 				if (aParentLine && aParentLine->mActionType != ACT_BLOCK_BEGIN) // Implies ACT_IS_LINE_PARENT(aParentLine->mActionType).  Functions are allowed inside blocks.
-																				// A function must not be defined directly below an IF/ELSE/LOOP because runtime evaluation won't handle it properly.
+					// A function must not be defined directly below an IF/ELSE/LOOP because runtime evaluation won't handle it properly.
 					return line->PreparseError(_T("Unexpected function"));
 			}
 			line_temp = PreparseBlocks(line->mNextLine, UNTIL_BLOCK_END, line, line->mAttribute ? 0 : aLoopType); // mAttribute usage: don't consider a function's body to be inside the loop, since it can be called from outside.
-																												  // "line" is now either NULL due to an error, or the location of the END_BLOCK itself.
+			// "line" is now either NULL due to an error, or the location of the END_BLOCK itself.
 			if (line_temp == NULL)
 				return NULL; // Error.
-							 // The BLOCK_BEGIN's mRelatedLine should point to the line *after* the BLOCK_END:
+			// The BLOCK_BEGIN's mRelatedLine should point to the line *after* the BLOCK_END:
 			line->mRelatedLine = line_temp->mNextLine;
 			// Since any lines contained inside this block would already have been handled by
 			// the recursion in the above call, continue searching from the end of this block:
@@ -10139,27 +9644,26 @@ Line *Script::PreparseBlocks(Line *aStartingLine, ExecUntilMode aMode, Line *aPa
 
 		line = line->mNextLine; // If NULL due to physical end-of-script, the for-loop's condition will catch it.
 		if (aMode == ONLY_ONE_LINE) // Return the next unprocessed line to the caller.
-									// In this case, line shouldn't be (and probably can't be?) NULL because the line after
-									// a single-line action shouldn't be the physical end of the script.  That's because
-									// the loader has ensured that all scripts now end in ACT_EXIT.  And that final
-									// ACT_EXIT should never be parsed here in ONLY_ONE_LINE mode because the only time
-									// that mode is used is for the action of an IF, an ELSE, or possibly a LOOP.
-									// In all of those cases, the final ACT_EXIT line in the script (which is explicitly
-									// inserted by the loader) cannot be the line that was just processed by the
-									// switch().  Therefore, the above assignment should not have set line to NULL
-									// (which is good because NULL would probably be construed as "failure" by our
-									// caller in this case):
+			// In this case, line shouldn't be (and probably can't be?) NULL because the line after
+			// a single-line action shouldn't be the physical end of the script.  That's because
+			// the loader has ensured that all scripts now end in ACT_EXIT.  And that final
+			// ACT_EXIT should never be parsed here in ONLY_ONE_LINE mode because the only time
+			// that mode is used is for the action of an IF, an ELSE, or possibly a LOOP.
+			// In all of those cases, the final ACT_EXIT line in the script (which is explicitly
+			// inserted by the loader) cannot be the line that was just processed by the
+			// switch().  Therefore, the above assignment should not have set line to NULL
+			// (which is good because NULL would probably be construed as "failure" by our
+			// caller in this case):
 			return line;
 		// else just continue the for-loop at the new value of line.
 	} // for()
 
-	  // End of script has been reached.  line is now NULL so don't dereference it.
+	// End of script has been reached.  line is now NULL so don't dereference it.
 
-	  // If we were still looking for an EndBlock to match up with a begin, that's an error.
-	  // This indicates that at least one BLOCK_BEGIN is missing a BLOCK_END.  Let the error
-	  // message point at the most recent BLOCK_BEGIN (aParentLine) rather than at mLastLine,
-	  // which points to an EXIT which was added automatically by 
-	  //().
+	// If we were still looking for an EndBlock to match up with a begin, that's an error.
+	// This indicates that at least one BLOCK_BEGIN is missing a BLOCK_END.  Let the error
+	// message point at the most recent BLOCK_BEGIN (aParentLine) rather than at mLastLine,
+	// which points to an EXIT which was added automatically by LoadFromFile().
 	if (aMode == UNTIL_BLOCK_END)
 		return aParentLine->PreparseError(ERR_MISSING_CLOSE_BRACE);
 
@@ -10168,7 +9672,7 @@ Line *Script::PreparseBlocks(Line *aStartingLine, ExecUntilMode aMode, Line *aPa
 	if (aMode == ONLY_ONE_LINE)
 		return mLastLine->PreparseError(_T("Q")); // Placeholder since probably impossible.  Formerly "The script ended while an action was still expected."
 
-												  // Otherwise, return something non-NULL to indicate success to the top-level caller:
+	// Otherwise, return something non-NULL to indicate success to the top-level caller:
 	return mLastLine;
 }
 
@@ -10184,7 +9688,7 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 	{
 		LPTSTR line_raw_arg1 = LINE_RAW_ARG1; // Resolve only once to help reduce code size.
 		LPTSTR line_raw_arg2 = LINE_RAW_ARG2; //
-
+		
 		switch (line->mActionType)
 		{
 		case ACT_BLOCK_BEGIN:
@@ -10220,17 +9724,17 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 				else
 				{
 					// Target is a named loop.
-					if (!(loop_label = FindLabel(loop_name)))
+					if ( !(loop_label = FindLabel(loop_name)) )
 						return line->PreparseError(ERR_NO_LABEL, loop_name);
 					loop_line = loop_label->mJumpToLine;
 					// Ensure the label points to a Loop, For-loop or While-loop ...
-					if (!ACT_IS_LOOP(loop_line->mActionType)
+					if (   !ACT_IS_LOOP(loop_line->mActionType)
 						// ... which encloses this line.  Use line->mParentLine as the starting-point of
 						// the "jump" to ensure the target isn't at the same nesting level as this line:
-						|| !line->mParentLine->IsJumpValid(*loop_label, true))
+						|| !line->mParentLine->IsJumpValid(*loop_label, true)   )
 						return line->PreparseError(ERR_PARAM1_INVALID); //_T("Target label does not point to an appropriate Loop."));
-																		// Although we've validated that it points to a loop, we can't resolve the line
-																		// after the loop's body as that (mRelatedLine) hasn't been determined yet.
+					// Although we've validated that it points to a loop, we can't resolve the line
+					// after the loop's body as that (mRelatedLine) hasn't been determined yet.
 					if (loop_line == line->mParentLine
 						// line->mParentLine must be non-NULL because above verified this line is enclosed by a Loop:
 						|| line->mParentLine->mActionType == ACT_BLOCK_BEGIN && loop_line == line->mParentLine->mParentLine)
@@ -10255,7 +9759,7 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 			if (line->ArgHasDeref(1))
 				// Since the jump-point contains a deref, it must be resolved at runtime:
 				line->mRelatedLine = NULL;
-			else
+  			else
 			{
 				if (!line->GetJumpTarget(false))
 					return NULL; // Error was already displayed by called function.
@@ -10270,7 +9774,7 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 				}
 				if (line->mActionType == ACT_GOTO && !line->CheckValidFinallyJump(((Label *)(line->mRelatedLine))->mJumpToLine))
 					return NULL; // Error already displayed above.
-								 //else leave mAttribute at its line-constructor default of ATTR_NONE.
+				//else leave mAttribute at its line-constructor default of ATTR_NONE.
 			}
 			break;
 
@@ -10279,12 +9783,12 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 				if (parent->mActionType == ACT_FINALLY)
 					return line->PreparseError(ERR_BAD_JUMP_INSIDE_FINALLY);
 			break;
-
-			// These next 4 must also be done here (i.e. *after* all the script lines have been added),
-			// so that labels both above and below this line can be resolved:
+			
+		// These next 4 must also be done here (i.e. *after* all the script lines have been added),
+		// so that labels both above and below this line can be resolved:
 		case ACT_ONEXIT:
 			if (*line_raw_arg1 && !line->ArgHasDeref(1))
-				if (!(line->mAttribute = FindLabel(line_raw_arg1)))
+				if (   !(line->mAttribute = FindLabel(line_raw_arg1))   )
 					return line->PreparseError(ERR_NO_LABEL);
 			break;
 
@@ -10296,21 +9800,18 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 					LPTSTR cp = line_raw_arg1 + 2;
 					if (!*cp) // Just "If"
 					{
-						if (line->mArgc > 2)
-							return line->PreparseError(ERR_PARAM3_MUST_BE_BLANK);
 						if (*line_raw_arg2 && !line->ArgHasDeref(2))
 						{
 							// Hotkey, If, Expression: Ensure the expression matches exactly an existing #If,
 							// as required by the Hotkey command.  This seems worth doing since the current
 							// behaviour might be unexpected (despite being documented), and because typos
 							// are likely due to the fact that case and whitespace matter.
-							for (HotkeyCriterion *cp = g_FirstHotExpr; ; cp = cp->NextCriterion)
-							{
-								if (!cp)
-									return line->PreparseError(ERR_HOTKEY_IF_EXPR);
-								if (!_tcscmp(line_raw_arg2, cp->WinTitle))
+							int i;
+							for (i = 0; i < g_HotExprLineCount; ++i)
+								if (!_tcscmp(line_raw_arg2, g_HotExprLines[i]->mArg[0].text))
 									break;
-							}
+							if (i == g_HotExprLineCount)
+								return line->PreparseError(_T("Parameter #2 must match an existing #If expression."));
 						}
 						break;
 					}
@@ -10326,7 +9827,7 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 					return line->PreparseError(ERR_PARAM1_INVALID);
 				}
 				if (*line_raw_arg2 && !line->ArgHasDeref(2))
-					if (!(line->mAttribute = FindCallable(line_raw_arg2)))
+					if (   !(line->mAttribute = FindCallable(line_raw_arg2))   )
 						if (!Hotkey::ConvertAltTab(line_raw_arg2, true))
 							return line->PreparseError(ERR_NO_LABEL);
 			}
@@ -10334,7 +9835,7 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 
 		case ACT_SETTIMER:
 			if (*line_raw_arg1 && !line->ArgHasDeref(1))
-				if (!(line->mAttribute = FindCallable(line_raw_arg1)))
+				if (   !(line->mAttribute = FindCallable(line_raw_arg1))   )
 					return line->PreparseError(ERR_NO_LABEL);
 			if (*line_raw_arg2 && !line->ArgHasDeref(2))
 				if (!Line::ConvertOnOff(line_raw_arg2) && !IsPureNumeric(line_raw_arg2, true) // v1.0.46.16: Allow negatives to support the new run-only-once mode.
@@ -10353,16 +9854,16 @@ Line *Script::PreparseCommands(Line *aStartingLine)
 				if (!label)
 					return line->PreparseError(ERR_NO_LABEL);
 				line->mRelatedLine = (Line *)label; // The script loader has ensured that this can't be NULL.
-													// Can't do this because the current line won't be the launching point for the
-													// Gosub.  Instead, the launching point will be the GroupActivate rather than the
-													// GroupAdd, so it will be checked by the GroupActivate or not at all (since it's
-													// not that important in the case of a Gosub -- it's mostly for Goto's):
-													//return IsJumpValid(label->mJumpToLine);
+				// Can't do this because the current line won't be the launching point for the
+				// Gosub.  Instead, the launching point will be the GroupActivate rather than the
+				// GroupAdd, so it will be checked by the GroupActivate or not at all (since it's
+				// not that important in the case of a Gosub -- it's mostly for Goto's):
+				//return IsJumpValid(label->mJumpToLine);
 			}
 			break;
 		}
 	} // for()
-	  // Return something non-NULL to indicate success:
+	// Return something non-NULL to indicate success:
 	return mLastLine;
 }
 
@@ -10383,13 +9884,13 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		, 4,4,4,4,4,4    // SYM_CPAREN, SYM_CBRACKET, SYM_CBRACE, SYM_OPAREN, SYM_OBRACKET, SYM_OBRACE (to simplify the code, parentheses/brackets/braces must be lower than all operators in precedence).
 		, 6              // SYM_COMMA -- Must be just above SYM_OPAREN so it doesn't pop OPARENs off the stack.
 		, 7,7,7,7,7,7,7,7,7,7,7,7  // SYM_ASSIGN_*. THESE HAVE AN ODD NUMBER to indicate right-to-left evaluation order, which is necessary for cascading assignments such as x:=y:=1 to work.
-								   //		, 8              // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
+//		, 8              // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
 		, 11, 11         // SYM_IFF_ELSE, SYM_IFF_THEN (ternary conditional).  HAS AN ODD NUMBER to indicate right-to-left evaluation order, which is necessary for ternaries to perform traditionally when nested in each other without parentheses.
-						 //		, 12             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
+//		, 12             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
 		, 16             // SYM_OR
 		, 20             // SYM_AND
 		, 25             // SYM_LOWNOT (the word "NOT": the low precedence version of logical-not).  HAS AN ODD NUMBER to indicate right-to-left evaluation order so that things like "not not var" are supports (which can be used to convert a variable into a pure 1/0 boolean value).
-						 //		, 26             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
+//		, 26             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
 		, 30, 30, 30     // SYM_EQUAL, SYM_EQUALCASE, SYM_NOTEQUAL (lower prec. than the below so that "x < 5 = var" means "result of comparison is the boolean value in var".
 		, 34, 34, 34, 34 // SYM_GT, SYM_LT, SYM_GTOE, SYM_LTOE
 		, 38             // SYM_CONCAT
@@ -10400,12 +9901,12 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		, 58, 58         // SYM_ADD, SYM_SUBTRACT
 		, 62, 62, 62     // SYM_MULTIPLY, SYM_DIVIDE, SYM_FLOORDIVIDE
 		, 67,67,67,67,67 // SYM_NEGATIVE (unary minus), SYM_HIGHNOT (the high precedence "!" operator), SYM_BITNOT, SYM_ADDRESS, SYM_DEREF
-						 // NOTE: THE ABOVE MUST BE AN ODD NUMBER to indicate right-to-left evaluation order, which was added in v1.0.46 to support consecutive unary operators such as !*var !!var (!!var can be used to convert a value into a pure 1/0 boolean).
-						 //		, 68             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
+		// NOTE: THE ABOVE MUST BE AN ODD NUMBER to indicate right-to-left evaluation order, which was added in v1.0.46 to support consecutive unary operators such as !*var !!var (!!var can be used to convert a value into a pure 1/0 boolean).
+//		, 68             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
 		, 72             // SYM_POWER (see note below).  Associativity kept as left-to-right for backward compatibility (e.g. 2**2**3 is 4**3=64 not 2**8=256).
 		, 77, 77         // SYM_PRE_INCREMENT, SYM_PRE_DECREMENT (higher precedence than SYM_POWER because it doesn't make sense to evaluate power first because that would cause ++/-- to fail due to operating on a non-lvalue.
-						 //		, 78             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
-						 //		, 82, 82         // RESERVED FOR SYM_POST_INCREMENT, SYM_POST_DECREMENT (which are listed higher above for the performance of YIELDS_AN_OPERAND().
+//		, 78             // THIS VALUE MUST BE LEFT UNUSED so that the one above can be promoted to it by the infix-to-postfix routine.
+//		, 82, 82         // RESERVED FOR SYM_POST_INCREMENT, SYM_POST_DECREMENT (which are listed higher above for the performance of YIELDS_AN_OPERAND().
 		, 86             // SYM_FUNC -- Has special handling which ensures it stays tightly bound with its parameters as though it's a single operand for use by other operators; the actual value here is irrelevant.
 		, 86             // SYM_NEW -- should be popped off the stack immediately after the pseudo function-call which follows it.
 		, 36             // SYM_REGEXMATCH
@@ -10453,7 +9954,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 	{
 		this_deref = deref && deref->marker ? deref : NULL; // A deref with a NULL marker terminates the list (i.e. the final deref isn't a deref, merely a terminator of sorts.
 
-															// BEFORE PROCESSING "this_deref" ITSELF, MUST FIRST PROCESS ANY LITERAL/RAW TEXT THAT LIES TO ITS LEFT.
+		// BEFORE PROCESSING "this_deref" ITSELF, MUST FIRST PROCESS ANY LITERAL/RAW TEXT THAT LIES TO ITS LEFT.
 		if (this_deref && cp < this_deref->marker // There's literal/raw text to the left of the next deref.
 			|| !this_deref && *cp) // ...or there's no next deref, but there's some literal raw text remaining to be processed.
 		{
@@ -10474,11 +9975,11 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 				ExprTokenType &this_infix_item = infix[infix_count]; // Might help reduce code size since it's referenced many places below.
 				this_infix_item.deref = NULL; // Init needed for SYM_ASSIGN and related; a non-NULL deref means it should be converted to an object-assignment.
 
-											  // CHECK IF THIS CHARACTER IS AN OPERATOR.
+				// CHECK IF THIS CHARACTER IS AN OPERATOR.
 				cp1 = cp[1]; // Improves performance by nearly 5% and appreciably reduces code size (at the expense of being less maintainable).
 				switch (*cp)
 				{
-					// The most common cases are kept up top to enhance performance if switch() is implemented as if-else ladder.
+				// The most common cases are kept up top to enhance performance if switch() is implemented as if-else ladder.
 				case '+':
 					if (cp1 == '=')
 					{
@@ -10567,8 +10068,8 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 						if ((cp1 >= '0' && cp1 <= '9') || cp1 == '.') // v1.0.46.01: Recognize dot too, to support numbers like -.5.
 						{
 							for (op_end = cp + 2; !_tcschr(EXPR_OPERAND_TERMINATORS_EX_DOT, *op_end); ++op_end); // Find the end of this number (can be '\0').
-																												 // 1.0.46.11: Due to obscurity, no changes have been made here to support scientific
-																												 // notation followed by the power operator; e.g. -1.0e+1**5.
+							// 1.0.46.11: Due to obscurity, no changes have been made here to support scientific
+							// notation followed by the power operator; e.g. -1.0e+1**5.
 							if (!this_deref || op_end < this_deref->marker) // Detect numeric double derefs such as one created via "12%i% = value".
 							{
 								// Because the power operator takes precedence over unary minus, don't collapse
@@ -10581,8 +10082,8 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 								LPTSTR pow_temp = omit_leading_whitespace(op_end);
 								if (!(pow_temp[0] == '*' && pow_temp[1] == '*'))
 									goto numeric_literal; // Goto is used for performance and also as a patch to minimize the chance of breaking other things via redesign.
-														  //else it's followed by pow.  Since pow is higher precedence than unary minus,
-														  // leave this unary minus as an operator so that it will take effect after the pow.
+								//else it's followed by pow.  Since pow is higher precedence than unary minus,
+								// leave this unary minus as an operator so that it will take effect after the pow.
 							}
 							//else possible double deref, so leave this unary minus as an operator.
 						}
@@ -10678,9 +10179,9 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 					}
 					else
 					{
-						if (!(deref_new = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType))))
+						if (  !(deref_new = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType)))  )
 							return LineError(ERR_OUTOFMEM);
-						if (!(infix_count && YIELDS_AN_OPERAND(infix[infix_count - 1].symbol)))
+						if (  !(infix_count && YIELDS_AN_OPERAND(infix[infix_count - 1].symbol))  )
 						{	// Array constructor; e.g. x := [1,2,3]
 							deref_new->func = g_script.FindFunc(_T("Array"));
 							deref_new->param_count = 0;
@@ -10708,7 +10209,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 				case '{':
 					if (infix_count && YIELDS_AN_OPERAND(infix[infix_count - 1].symbol))
 						return LineError(_T("Unexpected \"{\""));
-					if (!(deref_new = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType))))
+					if (  !(deref_new = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType)))  )
 						return LineError(ERR_OUTOFMEM);
 					deref_new->func = g_script.FindFunc(_T("Object"));
 					deref_new->is_function = true;
@@ -10826,7 +10327,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 					if (cp1 == '=')
 					{
 						++cp;
-						if (!(this_infix_item.deref = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType))))
+						if (   !(this_infix_item.deref = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType)))   )
 							return LineError(ERR_OUTOFMEM);
 						this_infix_item.deref->func = g_script.FindFunc(_T("RegExMatch"));
 						this_infix_item.deref->is_function = true;
@@ -10834,12 +10335,12 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 						this_infix_item.symbol = SYM_REGEXMATCH;
 					}
 					else
-						// If what lies to its left is a CPARAN or OPERAND, SYM_CONCAT is not auto-inserted because:
-						// 1) Allows ! and ~ to potentially be overloaded to become binary and unary operators in the future.
-						// 2) Keeps the behavior consistent with unary minus, which could never auto-concat since it would
-						//    always be seen as the binary subtract operator in such cases.
-						// 3) Simplifies the code.
-						this_infix_item.symbol = SYM_BITNOT;
+					// If what lies to its left is a CPARAN or OPERAND, SYM_CONCAT is not auto-inserted because:
+					// 1) Allows ! and ~ to potentially be overloaded to become binary and unary operators in the future.
+					// 2) Keeps the behavior consistent with unary minus, which could never auto-concat since it would
+					//    always be seen as the binary subtract operator in such cases.
+					// 3) Simplifies the code.
+					this_infix_item.symbol = SYM_BITNOT;
 					break;
 				case '?':
 					this_infix_item.symbol = SYM_IFF_THEN;
@@ -10855,9 +10356,9 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 					break;
 
 				case '"': // QUOTED/LITERAL STRING.
-						  // Note that single and double-derefs are impossible inside string-literals
-						  // because the load-time deref parser would never detect anything inside
-						  // of quotes -- even non-escaped percent signs -- as derefs.
+					// Note that single and double-derefs are impossible inside string-literals
+					// because the load-time deref parser would never detect anything inside
+					// of quotes -- even non-escaped percent signs -- as derefs.
 					if (infix_count && YIELDS_AN_OPERAND(infix[infix_count - 1].symbol)) // If it's an operand, at this stage it can only be SYM_OPERAND or SYM_STRING.
 					{
 						if (infix_count > MAX_TOKENS - 2) // -2 to ensure room for this operator and the operand further below.
@@ -10877,9 +10378,9 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							++op_end;
 							if (*op_end != '"') // String terminator or some non-quote character.
 								break;  // The previous char is the ending quote.
-										//else a pair of quotes, which resolves to a single literal quote. So fall through
-										// to the below, which will copy of quote character to the buffer. Then this pair
-										// is skipped over and the loop continues until the real end-quote is found.
+							//else a pair of quotes, which resolves to a single literal quote. So fall through
+							// to the below, which will copy of quote character to the buffer. Then this pair
+							// is skipped over and the loop continues until the real end-quote is found.
 						}
 						//else some character other than '\0' or '"'.
 						++op_end;
@@ -10888,11 +10389,11 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 
 					// MUST NOT REFER TO this_infix_item IN CASE HIGHER ABOVE DID ++infix_count:
 					infix[infix_count].symbol = SYM_STRING; // Marked explicitly as string vs. SYM_OPERAND to prevent it from being seen as a number, e.g. if (var == "12.0") would be false if var contains "12" with no trailing ".0".
-					if (!(infix[infix_count].marker = SimpleHeap::Malloc(cp, op_end - cp - 1))) // -1 to omit the ending quote.  cp was already adjusted to omit the starting quote.
+					if (   !(infix[infix_count].marker = SimpleHeap::Malloc(cp, op_end - cp - 1))   ) // -1 to omit the ending quote.  cp was already adjusted to omit the starting quote.
 						return LineError(ERR_OUTOFMEM);
 					StrReplace(infix[infix_count].marker, _T("\"\""), _T("\""), SCS_SENSITIVE); // Resolve each "" into a single ".  Consequently, a little bit of memory in "marker" might be wasted, but it doesn't seem worth the code size to compensate for this.
 					cp = omit_leading_whitespace(op_end); // Have the loop process whatever lies at op_end and beyond.
-
+					
 					if (*cp && _tcschr(_T("+-*&~!"), *cp) && cp[1] != '=' && (cp[1] != '&' || *cp != '&'))
 					{
 						// The symbol following this literal string is either a unary operator, or a
@@ -10942,7 +10443,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							// Ensure at least enough room for this operand and the operator further below.
 							if (infix_count > MAX_TOKENS - 2)
 								return LineError(ERR_EXPR_TOO_LONG);
-
+							
 							// Skip this '.'
 							++cp;
 
@@ -10954,7 +10455,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							// Rather than trying to predict how something like "obj.-1" will be handled, treat it as a syntax error.
 							// "obj.()" is allowed; it should mean "call the default method of obj" or "call the function object obj".
 							if (op_end == cp && *op_end != '(')
-								return LineError(ERR_INVALID_DOT, FAIL, cp - 1); // Intentionally vague since the user's intention isn't clear.
+								return LineError(ERR_INVALID_DOT, FAIL, cp-1); // Intentionally vague since the user's intention isn't clear.
 
 							bool is_new_op = false;
 							// For the '(' check below, determine if this op is part of a "new" operation, such as "new Class.NestedClass()".
@@ -10971,18 +10472,18 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 
 							// Output a SYM_OPERAND for the text following '.'
 							infix[infix_count].symbol = SYM_OPERAND;
-							if (!(infix[infix_count].marker = SimpleHeap::Malloc(cp, op_end - cp)))
+							if (   !(infix[infix_count].marker = SimpleHeap::Malloc(cp, op_end - cp))   )
 								return LineError(ERR_OUTOFMEM);
 							++infix_count;
 
 							SymbolType new_symbol; // Type of token: SYM_FUNC or SYM_DOT (which must be treated differently as it doesn't have parentheses).
 							DerefType *new_deref; // Holds a reference to the appropriate function, and parameter count.
-							if (!(new_deref = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType))))
+							if (   !(new_deref = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType)))   )
 								return LineError(ERR_OUTOFMEM);
 							new_deref->marker = cp - 1; // Not typically needed, set for error-reporting.
 							new_deref->param_count = 2; // Initially two parameters: the object and identifier.
 							new_deref->is_function = true;
-
+							
 							if (*op_end == '(' && !is_new_op)
 							{
 								new_symbol = SYM_FUNC;
@@ -11028,19 +10529,19 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 					// operator (different precedence), and it seemed too much trouble to invent some special
 					// operator symbol for load-time to insert as a placeholder/substitute (especially since that
 					// symbol would appear in ListLines).
-					if (op_end - cp == 3
+					if (op_end-cp == 3
 						&& (cp[0] == 'n' || cp[0] == 'N')
 						&& *omit_leading_whitespace(op_end) != ':') // Exclude "not:" and "new:", which are either the key in a key-value pair or a syntax error.
 					{
-						if ((cp1 == 'o' || cp1 == 'O')
-							&& (cp[2] == 't' || cp[2] == 'T')) // "NOT" was found.
+						if (   (cp1   == 'o' || cp1   == 'O')
+							&& (cp[2] == 't' || cp[2] == 'T')   ) // "NOT" was found.
 						{
 							this_infix_item.symbol = SYM_LOWNOT;
 							cp = op_end; // Have the loop process whatever lies at op_end and beyond.
 							continue; // Continue vs. break to avoid the ++cp at the bottom (though it might not matter in this case).
 						}
-						if ((cp1 == 'e' || cp1 == 'E')
-							&& (cp[2] == 'w' || cp[2] == 'W')) // "NEW" was found.
+						if (   (cp1   == 'e' || cp1   == 'E')
+							&& (cp[2] == 'w' || cp[2] == 'W')   ) // "NEW" was found.
 						{
 							if (infix_count && YIELDS_AN_OPERAND(infix[infix_count - 1].symbol))
 							{
@@ -11052,7 +10553,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							// A previous stage ensured this "new" is followed by something which looks like
 							// a function call.  Push this pseudo-operator onto the stack.  When the open-
 							// parenthesis is encountered, symbol will be changed to SYM_FUNC.
-							if (!(deref_new = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType))))
+							if (  !(deref_new = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType)))  )
 								return LineError(ERR_OUTOFMEM);
 							deref_new->marker = cp; // For error-reporting.
 							deref_new->param_count = 1; // Start counting at the class object, which precedes the open-parenthesis.
@@ -11064,14 +10565,14 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							continue;    //
 						}
 					}
-				numeric_literal:
+numeric_literal:
 					// Since above didn't "continue", this item is probably a raw numeric literal (either SYM_FLOAT
 					// or SYM_INTEGER, to be differentiated later) because just about every other possibility has
 					// been ruled out above.  For example, unrecognized symbols should be impossible at this stage
 					// because load-time validation would have caught them.  And any kind of unquoted alphanumeric
 					// characters (other than "NOT", which was detected above) wouldn't have reached this point
 					// because load-time pre-parsing would have marked it as a deref/var, not raw/literal text.
-					if ((*op_end == '-' || *op_end == '+') && ctoupper(op_end[-1]) == 'E' // v1.0.46.11: It looks like scientific notation...
+					if (   (*op_end == '-' || *op_end == '+') && ctoupper(op_end[-1]) == 'E' // v1.0.46.11: It looks like scientific notation...
 						&& !(cp[0] == '0' && ctoupper(cp[1]) == 'X') // ...and it's not a hex number (this check avoids falsely detecting hex numbers that end in 'E' as exponents). This line fixed in v1.0.46.12.
 						&& !(cp[0] == '-' && cp[1] == '0' && ctoupper(cp[2]) == 'X') // ...and it's not a negative hex number (this check avoids falsely detecting hex numbers that end in 'E' as exponents). This line added as a fix in v1.0.47.03.
 						)
@@ -11093,7 +10594,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 					}
 					// MUST NOT REFER TO this_infix_item IN CASE ABOVE DID ++infix_count:
 					infix[infix_count].symbol = SYM_OPERAND;
-					if (!(infix[infix_count].marker = SimpleHeap::Malloc(cp, op_end - cp)))
+					if (   !(infix[infix_count].marker = SimpleHeap::Malloc(cp, op_end - cp))   )
 						return LineError(ERR_OUTOFMEM);
 					cp = op_end; // Have the loop process whatever lies at op_end and beyond.
 					continue; // "Continue" to avoid the ++cp at the bottom.
@@ -11105,8 +10606,8 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		if (!this_deref) // All done because the above just processed all the raw/literal text (if any) that
 			break;       // lay to the right of the last deref.
 
-						 // THE ABOVE HAS NOW PROCESSED ANY/ALL RAW/LITERAL TEXT THAT LIES TO THE LEFT OF this_deref.
-						 // SO NOW PROCESS THIS_DEREF ITSELF.
+		// THE ABOVE HAS NOW PROCESSED ANY/ALL RAW/LITERAL TEXT THAT LIES TO THE LEFT OF this_deref.
+		// SO NOW PROCESS THIS_DEREF ITSELF.
 		if (infix_count > MAX_TOKENS - 1) // No room for the deref item below to be added.
 			return LineError(ERR_EXPR_TOO_LONG);
 		DerefType &this_deref_ref = *this_deref; // Boosts performance slightly.
@@ -11143,7 +10644,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 				infix[infix_count].var = this_deref_ref.var; // Set this first to allow optimizations below to override it.
 				if (this_deref_ref.var->Type() == VAR_NORMAL // VAR_ALIAS is taken into account (and resolved) by Type().
 					&& g_NoEnv) // v1.0.43.08: Added g_NoEnv.  Relies on short-circuit boolean order.
-								// "!this_deref_ref.var->Get()" isn't checked here.  See comments in SYM_DYNAMIC evaluation.
+					// "!this_deref_ref.var->Get()" isn't checked here.  See comments in SYM_DYNAMIC evaluation.
 				{
 					// DllCall() and possibly others rely on this having been done to support changing the
 					// value of a parameter (similar to by-ref).
@@ -11182,14 +10683,14 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 			}
 		} // Handling of the var or function in this_deref.
 
-		  // Finally, jump over the dereference text. Note that in the case of an expression, there might not
-		  // be any percent signs within the text of the dereference, e.g. x + y, not %x% + %y% (unless they're
-		  // deliberately double-derefs).
+		// Finally, jump over the dereference text. Note that in the case of an expression, there might not
+		// be any percent signs within the text of the dereference, e.g. x + y, not %x% + %y% (unless they're
+		// deliberately double-derefs).
 		cp += this_deref_ref.length;
 		// The outer loop will now do ++infix for us.
 
-		continue;     // To avoid falling into the label below. The label below is only reached by explicit goto.
-	double_deref: // Caller has set cp to be start and op_end to be the character after the last one of the double deref.
+continue;     // To avoid falling into the label below. The label below is only reached by explicit goto.
+double_deref: // Caller has set cp to be start and op_end to be the character after the last one of the double deref.
 		if (infix_count && YIELDS_AN_OPERAND(infix[infix_count - 1].symbol)) // If it's an operand, at this stage it can only be SYM_OPERAND or SYM_STRING.
 		{
 			if (infix_count > MAX_TOKENS - 2) // -2 to ensure room for this operator and the operand further below.
@@ -11198,7 +10699,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		}
 
 		infix[infix_count].symbol = SYM_DYNAMIC;
-		if (!(infix[infix_count].buf = SimpleHeap::Malloc(cp, op_end - cp))) // Example string: "Array%i%"
+		if (   !(infix[infix_count].buf = SimpleHeap::Malloc(cp, op_end - cp))   ) // Example string: "Array%i%"
 			return LineError(ERR_OUTOFMEM);
 
 		// Set "deref" properly for the loop to resume processing at the item after this double deref.
@@ -11209,11 +10710,11 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		derefs_in_this_double = (int)(deref - deref_start);
 		--deref; // Compensate for the outer loop's ++deref.
 
-				 // There's insufficient room to shoehorn all the necessary data into the token (since circuit_token probably
-				 // can't be safely overloaded at this stage), so allocate a little bit of stack memory, just enough for the
-				 // number of derefs (variables) whose contents comprise the name of this double-deref variable (typically
-				 // there's only one; e.g. the "i" in Array%i%).
-		if (!(deref_new = (DerefType *)SimpleHeap::Malloc((derefs_in_this_double + 1) * sizeof(DerefType)))) // Provides one extra at the end as a terminator.
+		// There's insufficient room to shoehorn all the necessary data into the token (since circuit_token probably
+		// can't be safely overloaded at this stage), so allocate a little bit of stack memory, just enough for the
+		// number of derefs (variables) whose contents comprise the name of this double-deref variable (typically
+		// there's only one; e.g. the "i" in Array%i%).
+		if (   !(deref_new = (DerefType *)SimpleHeap::Malloc((derefs_in_this_double + 1) * sizeof(DerefType)))   ) // Provides one extra at the end as a terminator.
 			return LineError(ERR_OUTOFMEM);
 		memcpy(deref_new, deref_start, derefs_in_this_double * sizeof(DerefType));
 		deref_new[derefs_in_this_double].marker = NULL; // Put a NULL in the last item, which terminates the array.
@@ -11222,7 +10723,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		infix[infix_count].var = (Var *)deref_new; // Postfix evaluation uses this to build the variable's name dynamically.
 
 		if (*op_end == '(' // i.e. dynamic function call (v1.0.47.06)
-			&& !(infix_count && infix[infix_count - 1].symbol == SYM_NEW)) // Not something like "new TestClass%n%()".
+			&& !(infix_count && infix[infix_count-1].symbol == SYM_NEW)) // Not something like "new TestClass%n%()".
 		{
 			if (infix_count > MAX_TOKENS - 2) // No room for the following symbol to be added (plus the ++infix done that will be done by the outer loop).
 				return LineError(ERR_EXPR_TOO_LONG);
@@ -11232,19 +10733,19 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 			++infix_count; // THIS CREATES ANOTHER TOKEN for the function call itself.  Order in infix is SYM_DYNAMIC + SYM_FUNC + (parameter tokens/operators).
 			infix[infix_count].symbol = SYM_FUNC;
 			infix[infix_count].deref = deref_start; // See comment below.
-													// The trick here is that this SYM_FUNC now points to one of the same deref items that the
-													// corresponding SYM_DYNAMIC does. During postfix evaluation, that allows SYM_DYNAMIC to update
-													// the attributes of that deref so that when the SYM_FUNC is executed, it will know which function
-													// to call.
+			// The trick here is that this SYM_FUNC now points to one of the same deref items that the
+			// corresponding SYM_DYNAMIC does. During postfix evaluation, that allows SYM_DYNAMIC to update
+			// the attributes of that deref so that when the SYM_FUNC is executed, it will know which function
+			// to call.
 		}
 		else
 			deref_start->is_function = false;
 		cp = op_end; // Must be done only after above is done using cp: Set things up for the next iteration.
-					 // The outer loop will now do ++infix for us.
+		// The outer loop will now do ++infix for us.
 	} // For each deref in this expression, and also for the final literal/raw text to the right of the last deref.
 
-	  // Terminate the array with a special item.  This allows infix-to-postfix conversion to do a faster
-	  // traversal of the infix array.
+	// Terminate the array with a special item.  This allows infix-to-postfix conversion to do a faster
+	// traversal of the infix array.
 	if (infix_count > MAX_TOKENS - 1) // No room for the following symbol to be added.
 		return LineError(ERR_EXPR_TOO_LONG);
 	infix[infix_count].symbol = SYM_INVALID;
@@ -11267,7 +10768,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		infix_symbol = this_infix->symbol;                     //
 		stack_symbol = stack[stack_count - 1]->symbol; // Frequently used, so resolve only once to help performance.
 
-													   // Put operands into the postfix array immediately, then move on to the next infix item:
+		// Put operands into the postfix array immediately, then move on to the next infix item:
 		if (IS_OPERAND(infix_symbol)) // At this stage, operands consist of only SYM_OPERAND and SYM_STRING.
 		{
 			if (infix_symbol == SYM_DYNAMIC && SYM_DYNAMIC_IS_VAR_NORMAL_OR_CLIP(this_infix)) // Ordered for short-circuit performance.
@@ -11288,23 +10789,23 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 				if (IS_ASSIGNMENT_OR_POST_OP(sym_prev) // Post-op must be checked for VAR_CLIPBOARD (by contrast, it seems unnecessary to check it for others; see comments below).
 					|| stack_symbol == SYM_PRE_INCREMENT || stack_symbol == SYM_PRE_DECREMENT) // Stack *not* infix.
 					this_infix->symbol = SYM_VAR; // Convert clipboard or environment variable into SYM_VAR.
-												  // POST-INC/DEC: It seems unnecessary to check for these except for VAR_CLIPBOARD because
-												  // those assignments (and indeed any assignment other than .= and :=) will have no effect
-												  // on a ON A SYM_DYNAMIC environment variable.  This is because by definition, such
-												  // variables have an empty Var::Contents(), and AutoHotkey v1 does not allow
-												  // math operations on blank variables.  Thus, the result of doing a math-assignment
-												  // operation on a blank lvalue is almost the same as doing it on an invalid lvalue.
-												  // The main difference is that with the exception of post-inc/dec, assignments
-												  // wouldn't produce an lvalue unless we explicitly check for them all above.
-												  // An lvalue should be produced so that the following features are consistent
-												  // even for variables whose names happen to match those of environment variables:
-												  // - Pass an assignment byref or takes its address; e.g. &(++x).
-												  // - Cascading assignments; e.g. (++var) += 4 (rare to be sure).
-												  // - Possibly other lvalue behaviors that rely on SYM_VAR being present.
-												  // Above logic might not be perfect because it doesn't check for parens such as (var):=x,
-												  // and possibly other obscure types of assignments.  However, it seems adequate given
-												  // the rarity of such things and also because env vars are being phased out (scripts can
-												  // use #NoEnv to avoid all such issues).
+				// POST-INC/DEC: It seems unnecessary to check for these except for VAR_CLIPBOARD because
+				// those assignments (and indeed any assignment other than .= and :=) will have no effect
+				// on a ON A SYM_DYNAMIC environment variable.  This is because by definition, such
+				// variables have an empty Var::Contents(), and AutoHotkey v1 does not allow
+				// math operations on blank variables.  Thus, the result of doing a math-assignment
+				// operation on a blank lvalue is almost the same as doing it on an invalid lvalue.
+				// The main difference is that with the exception of post-inc/dec, assignments
+				// wouldn't produce an lvalue unless we explicitly check for them all above.
+				// An lvalue should be produced so that the following features are consistent
+				// even for variables whose names happen to match those of environment variables:
+				// - Pass an assignment byref or takes its address; e.g. &(++x).
+				// - Cascading assignments; e.g. (++var) += 4 (rare to be sure).
+				// - Possibly other lvalue behaviors that rely on SYM_VAR being present.
+				// Above logic might not be perfect because it doesn't check for parens such as (var):=x,
+				// and possibly other obscure types of assignments.  However, it seems adequate given
+				// the rarity of such things and also because env vars are being phased out (scripts can
+				// use #NoEnv to avoid all such issues).
 			}
 			this_postfix = this_infix++;
 			this_postfix->circuit_token = NULL; // Set default. It's only ever overridden after it's in the postfix array.
@@ -11314,7 +10815,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 
 		// Since above didn't "continue", the current infix symbol is not an operand, but an operator or other symbol.
 
-		switch (infix_symbol)
+		switch(infix_symbol)
 		{
 		case SYM_CPAREN: // Listed first for performance. It occurs frequently while emptying the stack to search for the matching open-parenthesis.
 		case SYM_CBRACKET:	// Requires similar handling to CPAREN.
@@ -11326,9 +10827,9 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 				if (stack_symbol == SYM_BEGIN // This can happen with bad expressions like "Var := 1 ? (:) :" even though theoretically it should mean that paren is closed without having been opened (currently impossible due to load-time balancing).
 					|| IS_OPAREN_LIKE(stack_symbol)) // Mismatched parens/brackets/braces.
 				{
-					return LineError((infix_symbol == SYM_CPAREN) ? ERR_UNEXPECTED_CLOSE_PAREN
-						: (infix_symbol == SYM_CBRACKET) ? ERR_UNEXPECTED_CLOSE_BRACKET
-						: ERR_UNEXPECTED_CLOSE_BRACE);
+					return LineError( (infix_symbol == SYM_CPAREN) ? ERR_UNEXPECTED_CLOSE_PAREN
+									: (infix_symbol == SYM_CBRACKET) ? ERR_UNEXPECTED_CLOSE_BRACKET
+									: ERR_UNEXPECTED_CLOSE_BRACE );
 				}
 				else // This stack item is an operator.
 				{
@@ -11384,7 +10885,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 						continue;
 					}
 
-#ifdef ENABLE_DLLCALL
+					#ifdef ENABLE_DLLCALL
 					if (func && func->mBIF == &BIF_DllCall // Implies mIsBuiltIn == true.
 						&& in_param_list->param_count == 0) // i.e. this is the end of the first param.
 					{
@@ -11407,7 +10908,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							//     the script; or the function may be non-essential.
 						}
 					}
-#endif
+					#endif
 
 					// This is SYM_COMMA or SYM_CPAREN/BRACKET/BRACE at the end of a parameter.
 					++in_param_list->param_count;
@@ -11421,22 +10922,22 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 					&& in_param_list->is_function != DEREF_VARIADIC) // Check this last since it will probably be rare.
 					return LineError(ERR_TOO_FEW_PARAMS, FAIL, in_param_list->marker);
 			}
-
+				
 			switch (infix_symbol)
 			{
 			case SYM_CPAREN: // implies stack_symbol == SYM_OPAREN.
-							 // See comments near the bottom of this (outer) case.  The first open-paren on the stack must be the one that goes with this close-paren.
+				// See comments near the bottom of this (outer) case.  The first open-paren on the stack must be the one that goes with this close-paren.
 				--stack_count; // Remove this open-paren from the stack, since it is now complete.
 				++this_infix;  // Since this pair of parentheses is done, move on to the next token in the infix expression.
 
 				in_param_list = (DerefType *)stack[stack_count]->buf; // Restore in_param_list to the value it had when SYM_OPAREN was pushed onto the stack.
 
-				if (stack[stack_count - 1]->symbol == SYM_FUNC) // i.e. topmost item on stack is SYM_FUNC.
+				if (stack[stack_count-1]->symbol == SYM_FUNC) // i.e. topmost item on stack is SYM_FUNC.
 				{
 					goto standard_pop_into_postfix; // Within the postfix list, a function-call should always immediately follow its params.
 				}
 				break;
-
+				
 			case SYM_CBRACKET: // implies stack_symbol == SYM_OBRACKET.
 			case SYM_CBRACE: // implies stack_symbol == SYM_OBRACE.
 			{
@@ -11464,8 +10965,8 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 					stack_top.deref->func = &g_ObjCall; // Override the default now that we know this is a method-call.
 					++this_infix; // Skip SYM_CBRACKET so this_infix points to SYM_OPAREN.
 					this_infix->buf = stack_top.buf; // This contains the old value of in_param_list.
-													 // Push the open-paren over stack_top (which is now SYM_FUNC) so it will be handled
-													 // like an ordinary function call when a comma or the close-paren is encountered.
+					// Push the open-paren over stack_top (which is now SYM_FUNC) so it will be handled
+					// like an ordinary function call when a comma or the close-paren is encountered.
 					STACK_PUSH(this_infix++);
 					// The rest of the parameter list will be handled like any other function call,
 					// except that in_param_list->param_count is already non-zero.
@@ -11494,7 +10995,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							// exists at the end of the array as a terminator.
 							if (fwd_infix->symbol == SYM_INVALID || fwd_infix[1].symbol != SYM_EQUAL) // Relies on short-circuit boolean order.
 								break; // No further checking needed because there's no qualified equal-sign.
-									   // Otherwise, check what lies to the left of the equal-sign.
+							// Otherwise, check what lies to the left of the equal-sign.
 							if (fwd_infix->symbol == SYM_VAR)
 							{
 								fwd_infix[1].symbol = SYM_ASSIGN;
@@ -11503,11 +11004,11 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 							// Otherwise, it's not a pure/normal variable.  But check if it's an environment var.
 							if (fwd_infix->symbol != SYM_DYNAMIC || !SYM_DYNAMIC_IS_VAR_NORMAL_OR_CLIP(fwd_infix))
 								break; // It qualifies as neither SYM_DYNAMIC nor SYM_VAR.
-									   // Otherwise, this is an environment variable being assigned something, so treat
-									   // it as a normal variable rather than an environment variable. This is because
-									   // by tradition (and due to the fact that not many people would want it),
-									   // direct assignment to environment variables isn't supported by anything other
-									   // than EnvSet.
+							// Otherwise, this is an environment variable being assigned something, so treat
+							// it as a normal variable rather than an environment variable. This is because
+							// by tradition (and due to the fact that not many people would want it),
+							// direct assignment to environment variables isn't supported by anything other
+							// than EnvSet.
 							fwd_infix->symbol = SYM_VAR; // Convert dynamic to a normal variable, see above.
 							fwd_infix[1].symbol = SYM_ASSIGN;
 							// And now cascade to the right until the last qualified '=' operator is found.
@@ -11531,12 +11032,12 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 			STACK_PUSH(this_infix++);
 			// NOW FALL INTO THE OPEN-PAREN BELOW because load-time validation has ensured that each SYM_FUNC
 			// is followed by a '('.
-			// ABOVE CASE FALLS INTO BELOW.
+// ABOVE CASE FALLS INTO BELOW.
 		case SYM_OPAREN:
 			// Open-parentheses always go on the stack to await their matching close-parentheses.
 			this_infix->buf = (LPTSTR)in_param_list; // L31: Save current value on the stack with this SYM_OPAREN.
 			if (infix_symbol == SYM_FUNC)
-				in_param_list = this_infix[-1].deref; // Store this SYM_FUNC's deref.
+				in_param_list = this_infix[-1].deref	; // Store this SYM_FUNC's deref.
 			else if (stack_symbol == SYM_NEW)
 			{
 				// Now that the SYM_OPAREN of this SYM_NEW has been found, translate it to SYM_FUNC
@@ -11548,7 +11049,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 				in_param_list = NULL; // Allow multi-statement commas, even in cases like Func((x,y)).
 			STACK_PUSH(this_infix++);
 			break;
-
+			
 		case SYM_OBRACKET:
 		case SYM_OBRACE:
 			this_infix->buf = (LPTSTR)in_param_list; // Save current value on the stack with this SYM_OBRACKET.
@@ -11583,7 +11084,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 				this_postfix->circuit_token = this_infix; // Point this "THEN" to its "ELSE" for use by short-circuit. This simplifies short-circuit by means such as avoiding the need to take notice of nested IFF's when discarding a branch (a different stage points the IFF's condition to its "THEN").
 				++postfix_count;
 				STACK_PUSH(this_infix++); // Push the ELSE onto the stack so that its operands will go into the postfix array before it.
-										  // Above also does ++i since this ELSE found its matching IF/THEN, so it's time to move on to the next token in the infix expression.
+				// Above also does ++i since this ELSE found its matching IF/THEN, so it's time to move on to the next token in the infix expression.
 			}
 			else // This stack item is an operator INCLUDE some other THEN's ELSE (all such ELSE's should be purged from the stack so that 1 ? 1 ? 2 : 3 : 4 creates postfix 112?3:?4: not something like 112?3?4::.
 			{
@@ -11608,7 +11109,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 			else // Pop item off the stack, AND CONTINUE ITERATING, which will hit this line until stack is empty.
 				goto standard_pop_into_postfix;
 			// ALL PATHS ABOVE must continue or goto.
-
+			
 		case SYM_MULTIPLY:
 			if (in_param_list && (this_infix[1].symbol == SYM_CPAREN || this_infix[1].symbol == SYM_CBRACKET)) // Func(params*) or obj.foo[params*]
 			{
@@ -11619,16 +11120,16 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 			// DO NOT BREAK: FALL THROUGH TO BELOW
 
 		default: // This infix symbol is an operator, so act according to its precedence.
-				 // If the symbol waiting on the stack has a lower precedence than the current symbol, push the
-				 // current symbol onto the stack so that it will be processed sooner than the waiting one.
-				 // Otherwise, pop waiting items off the stack (by means of i not being incremented) until their
-				 // precedence falls below the current item's precedence, or the stack is emptied.
-				 // Note: BEGIN and OPAREN are the lowest precedence items ever to appear on the stack (CPAREN
-				 // never goes on the stack, so can't be encountered there).
-			if (sPrecedence[stack_symbol] < sPrecedence[infix_symbol] + (sPrecedence[infix_symbol] % 2) // Performance: An sPrecedence2[] array could be made in lieu of the extra add+indexing+modulo, but it benched only 0.3% faster, so the extra code size it caused didn't seem worth it.
+			// If the symbol waiting on the stack has a lower precedence than the current symbol, push the
+			// current symbol onto the stack so that it will be processed sooner than the waiting one.
+			// Otherwise, pop waiting items off the stack (by means of i not being incremented) until their
+			// precedence falls below the current item's precedence, or the stack is emptied.
+			// Note: BEGIN and OPAREN are the lowest precedence items ever to appear on the stack (CPAREN
+			// never goes on the stack, so can't be encountered there).
+			if (   sPrecedence[stack_symbol] < sPrecedence[infix_symbol] + (sPrecedence[infix_symbol] % 2) // Performance: An sPrecedence2[] array could be made in lieu of the extra add+indexing+modulo, but it benched only 0.3% faster, so the extra code size it caused didn't seem worth it.
 				|| IS_ASSIGNMENT_EXCEPT_POST_AND_PRE(infix_symbol) && stack_symbol != SYM_DEREF // See note 1 below. Ordered for short-circuit performance.
 				|| stack_symbol == SYM_POWER && (infix_symbol >= SYM_NEGATIVE && infix_symbol <= SYM_DEREF // See note 2 below. Check lower bound first for short-circuit performance.
-					|| infix_symbol == SYM_LOWNOT))
+					|| infix_symbol == SYM_LOWNOT)   )
 			{
 				// NOTE 1: v1.0.46: The IS_ASSIGNMENT_EXCEPT_POST_AND_PRE line above was added in conjunction with
 				// the new assignment operators (e.g. := and +=). Here's what it does: Normally, the assignment
@@ -11697,10 +11198,10 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 		} // switch(infix_symbol)
 
 		continue; // Avoid falling into the label below except via explicit jump.  Performance: Doing it this way rather than replacing break with continue everywhere above generates slightly smaller and slightly faster code.
-	standard_pop_into_postfix: // Use of a goto slightly reduces code size.
+standard_pop_into_postfix: // Use of a goto slightly reduces code size.
 		this_postfix = STACK_POP;
 		this_postfix->circuit_token = NULL; // Set default. It's only ever overridden after it's in the postfix array.
-											// Additional processing for syntax sugar:
+		// Additional processing for syntax sugar:
 		SymbolType postfix_symbol = this_postfix->symbol;
 		if (postfix_symbol == SYM_FUNC)
 		{
@@ -11733,7 +11234,7 @@ ResultType Line::ExpressionToPostfix(ArgStruct &aArg)
 						ExprTokenType *&that_postfix = postfix[postfix_count]; // In case above did postfix_count++.
 						that_postfix = (ExprTokenType *)_alloca(sizeof(ExprTokenType));
 						that_postfix->symbol = SYM_FUNC;
-						if (!(that_postfix->deref = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType)))) // Must be persistent memory, unlike that_postfix itself.
+						if (  !(that_postfix->deref = (DerefType *)SimpleHeap::Malloc(sizeof(DerefType)))  ) // Must be persistent memory, unlike that_postfix itself.
 							return LineError(ERR_OUTOFMEM);
 						that_postfix->deref->func = &g_ObjGetInPlace;
 						that_postfix->deref->is_function = true;
@@ -11823,7 +11324,7 @@ end_of_infix_to_postfix:
 	// any 8-byte members like __int64 or double in the compressed struct because that would change the default
 	// alignment to 64-bit vs. 32-bit, which would keep the struct size at 16 bytes rather than allowing it to
 	// fall to 12 bytes.
-	if (!(aArg.postfix = (ExprTokenType *)SimpleHeap::Malloc((postfix_count + 1) * sizeof(ExprTokenType)))) // +1 for the terminator item added below.
+	if (   !(aArg.postfix = (ExprTokenType *)SimpleHeap::Malloc((postfix_count+1)*sizeof(ExprTokenType)))   ) // +1 for the terminator item added below.
 		return LineError(ERR_OUTOFMEM);
 
 	int i, j;
@@ -11837,7 +11338,7 @@ end_of_infix_to_postfix:
 				new_token.buf = NULL; // Indicate that this SYM_OPERAND token LACKS a pre-converted binary integer.
 			else // Pre-convert to binary integer, which can increase performance of complex expressions by up to 20%.
 			{
-				if (!(new_token.buf = (LPTSTR)SimpleHeap::Malloc(sizeof(__int64))))
+				if (   !(new_token.buf = (LPTSTR) SimpleHeap::Malloc(sizeof(__int64)))   )
 					return LineError(ERR_OUTOFMEM);
 				*(__int64 *)new_token.buf = ATOI64(new_token.marker);
 			}
@@ -11856,17 +11357,17 @@ end_of_infix_to_postfix:
 //-------------------------------------------------------------------------------------
 
 // Init static vars:
-Line *Line::sLog[] = { NULL };  // Initialize all the array elements.
+Line *Line::sLog[] = {NULL};  // Initialize all the array elements.
 DWORD Line::sLogTick[]; // No initialization needed.
 int Line::sLogNext = 0;  // Start at the first element.
 
-#ifdef AT  // Reduces code size to omit things that are unused, and helps catch bugs at compile-time.
-LPTSTR Line::sSourceFile[1]; // No init needed.
+#ifdef AUTOHOTKEYSC  // Reduces code size to omit things that are unused, and helps catch bugs at compile-time.
+	LPTSTR Line::sSourceFile[1]; // No init needed.
 #else
-LPTSTR *Line::sSourceFile = NULL; // Init to NULL for use with realloc() and for maintainability.
-int Line::sMaxSourceFiles = 0;
+	LPTSTR *Line::sSourceFile = NULL; // Init to NULL for use with realloc() and for maintainability.
+	int Line::sMaxSourceFiles = 0;
 #endif
-int Line::sSourceFileCount = 0; // Zero source files initially.  The main script will be the first.
+	int Line::sSourceFileCount = 0; // Zero source files initially.  The main script will be the first.
 
 LPTSTR Line::sDerefBuf = NULL;  // Buffer to hold the values of any args that need to be dereferenced.
 size_t Line::sDerefBufSize = 0;
@@ -11919,8 +11420,8 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 {
 	Line *unused_jump_to_line;
 	Line *&caller_jump_to_line = apJumpToLine ? *apJumpToLine : unused_jump_to_line; // Simplifies code in other places.
-																					 // Important to init, since most of the time it will keep this value.
-																					 // Tells caller that no jump is required (default):
+	// Important to init, since most of the time it will keep this value.
+	// Tells caller that no jump is required (default):
 	caller_jump_to_line = NULL;
 
 	// The benchmark improvement of having the following variables declared outside the loop rather than inside
@@ -11937,7 +11438,7 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 	BOOL jumping_from_inside_function_to_outside;
 	ResultType if_condition, result;
 	LONG_OPERATION_INIT
-		global_struct &g = *::g; // Reduces code size and may improve performance. Eclipsing ::g with local g makes compiler remind/enforce the use of the right one.
+	global_struct &g = *::g; // Reduces code size and may improve performance. Eclipsing ::g with local g makes compiler remind/enforce the use of the right one.
 
 	for (Line *line = this; line != NULL;)
 	{
@@ -11969,28 +11470,28 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 		//    as URLDownloadToFile, FileSetAttrib, etc.
 		LONG_OPERATION_UPDATE
 
-			// If interruptions are currently forbidden, it's our responsibility to check if the number
-			// of lines that have been run since this quasi-thread started now indicate that
-			// interruptibility should be reenabled.  But if UninterruptedLineCountMax is negative, don't
-			// bother checking because this quasi-thread will stay non-interruptible until it finishes.
-			// v1.0.38.04: If g.ThreadIsCritical==true, no need to check or accumulate g.UninterruptedLineCount
-			// because the script is now in charge of this thread's interruptibility.
-			if (!g.AllowThreadToBeInterrupted && !g.ThreadIsCritical && g_script.mUninterruptedLineCountMax > -1) // Ordered for short-circuit performance.
-			{
-				// To preserve backward compatibility, ExecUntil() must be the one to check
-				// g.UninterruptedLineCount and update g.AllowThreadToBeInterrupted, rather than doing
-				// those things on-demand in IsInterruptible().  If those checks were moved to
-				// IsInterruptible(), they might compare against a different/changed value of
-				// g_script.mUninterruptedLineCountMax because IsInterruptible() is called only upon demand.
-				// THIS SECTION DOES NOT CHECK g.ThreadStartTime because that only needs to be
-				// checked on demand by callers of IsInterruptible().
-				if (g.UninterruptedLineCount > g_script.mUninterruptedLineCountMax) // See above.
-					g.AllowThreadToBeInterrupted = true;
-				else
-					// Incrementing this unconditionally makes it a cruder measure than g.LinesPerCycle,
-					// but it seems okay to be less accurate for this purpose:
-					++g.UninterruptedLineCount;
-			}
+		// If interruptions are currently forbidden, it's our responsibility to check if the number
+		// of lines that have been run since this quasi-thread started now indicate that
+		// interruptibility should be reenabled.  But if UninterruptedLineCountMax is negative, don't
+		// bother checking because this quasi-thread will stay non-interruptible until it finishes.
+		// v1.0.38.04: If g.ThreadIsCritical==true, no need to check or accumulate g.UninterruptedLineCount
+		// because the script is now in charge of this thread's interruptibility.
+		if (!g.AllowThreadToBeInterrupted && !g.ThreadIsCritical && g_script.mUninterruptedLineCountMax > -1) // Ordered for short-circuit performance.
+		{
+			// To preserve backward compatibility, ExecUntil() must be the one to check
+			// g.UninterruptedLineCount and update g.AllowThreadToBeInterrupted, rather than doing
+			// those things on-demand in IsInterruptible().  If those checks were moved to
+			// IsInterruptible(), they might compare against a different/changed value of
+			// g_script.mUninterruptedLineCountMax because IsInterruptible() is called only upon demand.
+			// THIS SECTION DOES NOT CHECK g.ThreadStartTime because that only needs to be
+			// checked on demand by callers of IsInterruptible().
+			if (g.UninterruptedLineCount > g_script.mUninterruptedLineCountMax) // See above.
+				g.AllowThreadToBeInterrupted = true;
+			else
+				// Incrementing this unconditionally makes it a cruder measure than g.LinesPerCycle,
+				// but it seems okay to be less accurate for this purpose:
+				++g.UninterruptedLineCount;
+		}
 
 		// The below handles the message-loop checking regardless of whether
 		// aMode is ONLY_ONE_LINE (i.e. recursed) or not (i.e. we're using
@@ -12003,22 +11504,22 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 			// mLinesExecutedThisCycle for us:
 			MsgSleep(10);  // Don't use INTERVAL_UNSPECIFIED, which wouldn't sleep at all if there's a msg waiting.
 
-						   // At this point, a pause may have been triggered either by the above MsgSleep()
-						   // or due to the action of a command (e.g. Pause, or perhaps tray menu "pause" was selected during Sleep):
+		// At this point, a pause may have been triggered either by the above MsgSleep()
+		// or due to the action of a command (e.g. Pause, or perhaps tray menu "pause" was selected during Sleep):
 		while (g.IsPaused) // An initial "if (g.IsPaused)" prior to the loop doesn't make it any faster.
 			MsgSleep(INTERVAL_UNSPECIFIED);  // Must check often to periodically run timed subroutines.
 
-											 // Do these only after the above has had its opportunity to spend a significant amount
-											 // of time doing what it needed to do.  i.e. do these immediately before the line will actually
-											 // be run so that the time it takes to run will be reflected in the ListLines log.
-		g_script.mCurrLine = line;  // Simplifies error reporting when we get deep into function calls.
+		// Do these only after the above has had its opportunity to spend a significant amount
+		// of time doing what it needed to do.  i.e. do these immediately before the line will actually
+		// be run so that the time it takes to run will be reflected in the ListLines log.
+        g_script.mCurrLine = line;  // Simplifies error reporting when we get deep into function calls.
 
 		if (g.ListLinesIsEnabled)
 			LOG_LINE(line)
 
 #ifdef CONFIG_DEBUGGER
-			if (g_Debugger.IsConnected() && line->mActionType != ACT_WHILE) // L31: PreExecLine of ACT_WHILE is now handled in PerformLoopWhile() where inspecting A_Index will yield the correct result.
-				g_Debugger.PreExecLine(line);
+		if (g_Debugger.IsConnected() && line->mActionType != ACT_WHILE) // L31: PreExecLine of ACT_WHILE is now handled in PerformLoopWhile() where inspecting A_Index will yield the correct result.
+			g_Debugger.PreExecLine(line);
 #endif
 
 		// Do this only after the opportunity to Sleep (above) has passed, because during
@@ -12120,10 +11621,10 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 					line = line->mRelatedLine; // The preparser has ensured that this is always non-NULL.
 					if (line->mActionType == ACT_ELSE)
 						line = line->mRelatedLine;
-					// Now line is the ELSE's "I'm finished" jump-point, which is where
-					// we want to be.  If line is now NULL, it will be caught when this
-					// loop iteration is ended by the "continue" stmt below.  UPDATE:
-					// it can't be NULL since all scripts now end in ACT_EXIT.
+						// Now line is the ELSE's "I'm finished" jump-point, which is where
+						// we want to be.  If line is now NULL, it will be caught when this
+						// loop iteration is ended by the "continue" stmt below.  UPDATE:
+						// it can't be NULL since all scripts now end in ACT_EXIT.
 					// else the IF had NO else, so we're already at the IF's "I'm finished" jump-point.
 				}
 			}
@@ -12160,10 +11661,10 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 					}
 					else // Do the normal clean-up for an ELSE statement.
 						line = line->mRelatedLine;
-					// Now line is the ELSE's "I'm finished" jump-point, which is where
-					// we want to be.  If line is now NULL, it will be caught when this
-					// loop iteration is ended by the "continue" stmt below.  UPDATE:
-					// it can't be NULL since all scripts now end in ACT_EXIT.
+						// Now line is the ELSE's "I'm finished" jump-point, which is where
+						// we want to be.  If line is now NULL, it will be caught when this
+						// loop iteration is ended by the "continue" stmt below.  UPDATE:
+						// it can't be NULL since all scripts now end in ACT_EXIT.
 				}
 				else if (aMode == ONLY_ONE_LINE)
 					// Since this IF statement has no ELSE, and since it was executed
@@ -12175,8 +11676,8 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 			continue; // Let the for-loop process the new location specified by <line>.
 		} // if (ACT_IS_IF)
 
-		  // If above didn't continue, it's not an IF, so handle the other
-		  // flow-control types:
+		// If above didn't continue, it's not an IF, so handle the other
+		// flow-control types:
 		switch (line->mActionType)
 		{
 		case ACT_GOSUB:
@@ -12194,9 +11695,9 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 				// So pass "true" below because don't want to update its mRelatedLine.  This is because
 				// the label should be resolved every time through the loop in case the variable that
 				// contains the label changes, e.g. Gosub, %MyLabel%
-				if (!(jump_to_label = line->GetJumpTarget(true)))
+				if (   !(jump_to_label = line->GetJumpTarget(true))   )
 					return FAIL; // Error was already displayed by called function.
-								 // Below is ordered for short-circuit performance.
+				// Below is ordered for short-circuit performance.
 				jumping_from_inside_function_to_outside = g.CurrentFunc && jump_to_label->mJumpToLine->IsOutsideAnyFunctionBody();
 			}
 
@@ -12232,21 +11733,21 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 			// A single goto can cause an infinite loop if misused, so be sure to do this to
 			// prevent the program from hanging:
 			++g_script.mLinesExecutedThisCycle;
-			if (!(jump_to_label = (Label *)line->mRelatedLine))
+			if (   !(jump_to_label = (Label *)line->mRelatedLine)   )
 				// The label is a dereference, otherwise it would have been resolved at load-time.
 				// So send true because we don't want to update its mRelatedLine.  This is because
 				// we want to resolve the label every time through the loop in case the variable
 				// that contains the label changes, e.g. Gosub, %MyLabel%
-				if (!(jump_to_label = line->GetJumpTarget(true)))
+				if (   !(jump_to_label = line->GetJumpTarget(true))   )
 					return FAIL; // Error was already displayed by called function.
-								 // Now that the Goto is certain to occur:
+			// Now that the Goto is certain to occur:
 			g.CurrentLabel = jump_to_label; // v1.0.46.16: Support A_ThisLabel.
-											// One or both of these lines can be NULL.  But the preparser should have
-											// ensured that all we need to do is a simple compare to determine
-											// whether this Goto should be handled by this layer or its caller
-											// (i.e. if this Goto's target is not in our nesting level, it MUST be the
-											// caller's responsibility to either handle it or pass it on to its
-											// caller).
+			// One or both of these lines can be NULL.  But the preparser should have
+			// ensured that all we need to do is a simple compare to determine
+			// whether this Goto should be handled by this layer or its caller
+			// (i.e. if this Goto's target is not in our nesting level, it MUST be the
+			// caller's responsibility to either handle it or pass it on to its
+			// caller).
 			if (aMode == ONLY_ONE_LINE || line->mParentLine != jump_to_label->mJumpToLine->mParentLine)
 			{
 				caller_jump_to_line = jump_to_label->mJumpToLine; // Tell the caller to handle this jump.
@@ -12260,7 +11761,7 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 		{
 			++g_script.mLinesExecutedThisCycle; // Always increment for GroupActivate.
 			WinGroup *group;
-			if (!(group = (WinGroup *)mAttribute))
+			if (   !(group = (WinGroup *)mAttribute)   )
 				group = g_script.FindGroup(ARG1);
 			result = OK; // Set default.
 			ResultType activate_result = FAIL;
@@ -12523,22 +12024,22 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 					result = line->PerformLoopParseCSV(aResultToken, continue_main_loop, jump_to_line, until);
 				break;
 			case (size_t)ATTR_LOOP_READ_FILE:
-			{
-				TextFile tfile;
-				if (*ARG2 && tfile.Open(ARG2, DEFAULT_READ_FLAGS, g.Encoding & CP_AHKCP)) // v1.0.47: Added check for "" to avoid debug-assertion failure while in debug mode (maybe it's bad to to open file "" in release mode too).
 				{
-					result = line->PerformLoopReadFile(aResultToken, continue_main_loop, jump_to_line, until
-						, &tfile, ARG3);
-					tfile.Close();
+					TextFile tfile;
+					if (*ARG2 && tfile.Open(ARG2, DEFAULT_READ_FLAGS, g.Encoding & CP_AHKCP)) // v1.0.47: Added check for "" to avoid debug-assertion failure while in debug mode (maybe it's bad to to open file "" in release mode too).
+					{
+						result = line->PerformLoopReadFile(aResultToken, continue_main_loop, jump_to_line, until
+							, &tfile, ARG3);
+						tfile.Close();
+					}
+					else
+						// The open of a the input file failed.  So just set result to OK since setting the
+						// ErrorLevel isn't supported with loops (since that seems like it would be an overuse
+						// of ErrorLevel, perhaps changing its value too often when the user would want
+						// it saved -- in any case, changing that now might break existing scripts).
+						result = OK;
 				}
-				else
-					// The open of a the input file failed.  So just set result to OK since setting the
-					// ErrorLevel isn't supported with loops (since that seems like it would be an overuse
-					// of ErrorLevel, perhaps changing its value too often when the user would want
-					// it saved -- in any case, changing that now might break existing scripts).
-					result = OK;
-			}
-			break;
+				break;
 			case (size_t)ATTR_LOOP_FILEPATTERN:
 			case (size_t)ATTR_LOOP_NEW_FILES:
 				result = line->PerformLoopFilePattern(aResultToken, continue_main_loop, jump_to_line, until
@@ -12556,7 +12057,7 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 					root_key = RegConvertRootKey(ARG1, &is_remote_registry), subkey = ARG2; // This will open the key if it's remote.
 				else
 					root_key = RegConvertKey(ARG2, REG_NEW_SYNTAX, &subkey, &is_remote_registry);
-				if (root_key)
+				if (root_key) 
 				{
 					// root_key_type needs to be passed in order to support A_LoopRegKey:
 					result = line->PerformLoopReg(aResultToken, continue_main_loop, jump_to_line, until
@@ -12741,7 +12242,7 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 				}
 				g.ThrownToken = thrown_token; // If non-NULL, this was thrown within the try block.
 			}
-
+			
 			if (aMode == ONLY_ONE_LINE || result != OK)
 			{
 				caller_jump_to_line = jump_to_line;
@@ -12781,7 +12282,7 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 			if (!sDerefBuf)
 			{
 				sDerefBufSize = (line->mArg[0].length < MAX_NUMBER_LENGTH ? MAX_NUMBER_LENGTH : line->mArg[0].length) + 1;
-				if (!(sDerefBuf = tmalloc(sDerefBufSize)))
+				if ( !(sDerefBuf = tmalloc(sDerefBufSize)) )
 				{
 					sDerefBufSize = 0;
 					return line->LineError(ERR_OUTOFMEM);
@@ -12790,7 +12291,7 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 
 			PRIVATIZE_S_DEREF_BUF;
 			LPTSTR our_buf_marker = our_deref_buf;
-			LPTSTR arg_deref[] = { 0, 0 };
+			LPTSTR arg_deref[] = {0, 0};
 			LPTSTR strVal;
 			token->symbol = SYM_INVALID;
 			strVal = line->ExpandExpression(0, result, token, our_buf_marker, our_deref_buf, our_deref_buf_size, arg_deref, 0);
@@ -12837,11 +12338,11 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 			// by a hotkey):
 			if (IS_PERSISTENT)
 				return EARLY_EXIT;  // It's "early" because only the very end of the script is the "normal" exit.
-									// EARLY_EXIT needs to be distinct from FAIL for ExitApp() and AutoExecSection().
-									// Otherwise, FALL THROUGH TO BELOW:
+				// EARLY_EXIT needs to be distinct from FAIL for ExitApp() and AutoExecSection().
+			// Otherwise, FALL THROUGH TO BELOW:
 		case ACT_EXITAPP: // Unconditional exit.
-						  // This has been tested and it does yield to the OS the error code indicated in ARG1,
-						  // if present (otherwise it returns 0, naturally) as expected:
+			// This has been tested and it does yield to the OS the error code indicated in ARG1,
+			// if present (otherwise it returns 0, naturally) as expected:
 			return g_script.ExitApp(EXIT_EXIT, NULL, (int)line->ArgIndexToInt64(0));
 
 		case ACT_BLOCK_BEGIN:
@@ -12903,9 +12404,9 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 			}
 			else // Just go to the end of our block and continue from there.
 				line = line->mRelatedLine;
-			// Now line is the line after the end of this block.  Can be NULL (end of script).
-			// UPDATE: It can't be NULL (not that it matters in this case) since the loader
-			// has ensured that all scripts now end in an ACT_EXIT.
+				// Now line is the line after the end of this block.  Can be NULL (end of script).
+				// UPDATE: It can't be NULL (not that it matters in this case) since the loader
+				// has ensured that all scripts now end in an ACT_EXIT.
 			continue;  // Resume looping starting at the above line.  "continue" is actually slightly faster than "break" in these cases.
 
 		case ACT_BLOCK_END:
@@ -12923,13 +12424,13 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 				return line->LineError(_T("A \"return\" must be encountered prior to this \"}\"."));  // Former error msg was "Unexpected end-of-block (Gosub without Return?)."
 			return OK; // It's the caller's responsibility to resume execution at the next line, if appropriate.
 
-					   // ACT_ELSE can happen when one of the cases in this switch failed to properly handle
-					   // aMode == ONLY_ONE_LINE.  But even if ever happens, it will just drop into the default
-					   // case, which will result in a FAIL (silent exit of thread) as an indicator of the problem.
-					   // So it's commented out:
-					   //case ACT_ELSE:
-					   //	// Shouldn't happen if the pre-parser and this function are designed properly?
-					   //	return line->LineError("Unexpected ELSE.");
+		// ACT_ELSE can happen when one of the cases in this switch failed to properly handle
+		// aMode == ONLY_ONE_LINE.  But even if ever happens, it will just drop into the default
+		// case, which will result in a FAIL (silent exit of thread) as an indicator of the problem.
+		// So it's commented out:
+		//case ACT_ELSE:
+		//	// Shouldn't happen if the pre-parser and this function are designed properly?
+		//	return line->LineError("Unexpected ELSE.");
 
 		default:
 			++g_script.mLinesExecutedThisCycle;
@@ -12942,31 +12443,31 @@ ResultType Line::ExecUntil(ExecUntilMode aMode, ExprTokenType *aResultToken, Lin
 		} // switch()
 	} // for each line
 
-	  // Above loop ended because the end of the script was reached.
-	  // At this point, it should be impossible for aMode to be
-	  // UNTIL_BLOCK_END because that would mean that the blocks
-	  // aren't all balanced (or there is a design flaw in this
-	  // function), but they are balanced because the preparser
-	  // verified that.  It should also be impossible for the
-	  // aMode to be ONLY_ONE_LINE because the function is only
-	  // called in that mode to execute the first action-line
-	  // beneath an IF or an ELSE, and the preparser has already
-	  // verified that every such IF and ELSE has a non-NULL
-	  // line after it.  Finally, aMode can be UNTIL_RETURN, but
-	  // that is normal mode of operation at the top level,
-	  // so probably shouldn't be considered an error.  For example,
-	  // if the script has no hotkeys, it is executed from its
-	  // first line all the way to the end.  For it not to have
-	  // a RETURN or EXIT is not an error.  UPDATE: The loader
-	  // now ensures that all scripts end in ACT_EXIT, so
-	  // this line should never be reached:
+	// Above loop ended because the end of the script was reached.
+	// At this point, it should be impossible for aMode to be
+	// UNTIL_BLOCK_END because that would mean that the blocks
+	// aren't all balanced (or there is a design flaw in this
+	// function), but they are balanced because the preparser
+	// verified that.  It should also be impossible for the
+	// aMode to be ONLY_ONE_LINE because the function is only
+	// called in that mode to execute the first action-line
+	// beneath an IF or an ELSE, and the preparser has already
+	// verified that every such IF and ELSE has a non-NULL
+	// line after it.  Finally, aMode can be UNTIL_RETURN, but
+	// that is normal mode of operation at the top level,
+	// so probably shouldn't be considered an error.  For example,
+	// if the script has no hotkeys, it is executed from its
+	// first line all the way to the end.  For it not to have
+	// a RETURN or EXIT is not an error.  UPDATE: The loader
+	// now ensures that all scripts end in ACT_EXIT, so
+	// this line should never be reached:
 	return OK;
 }
 
 
 
 ResultType Line::EvaluateCondition() // __forceinline on this reduces benchmarks, probably because it reduces caching effectiveness by having code in the case that doesn't execute much in the benchmarks.
-									 // Returns CONDITION_TRUE or CONDITION_FALSE (FAIL is returned only in DEBUG mode).
+// Returns CONDITION_TRUE or CONDITION_FALSE (FAIL is returned only in DEBUG mode).
 {
 #ifdef _DEBUG
 	if (!ACT_IS_IF(mActionType))
@@ -12981,9 +12482,9 @@ ResultType Line::EvaluateCondition() // __forceinline on this reduces benchmarks
 	switch (mActionType)
 	{
 	case ACT_IFEXPR: // Listed first for performance.
-					 // The following is ordered for short-circuit performance. No need to check if it's g_ErrorLevel
-					 // (like ArgMustBeDereferenced() does) because ACT_IFEXPR doesn't internally change ErrorLevel.
-					 // Also, RAW is safe because loadtime validation ensured there is at least 1 arg.
+		// The following is ordered for short-circuit performance. No need to check if it's g_ErrorLevel
+		// (like ArgMustBeDereferenced() does) because ACT_IFEXPR doesn't internally change ErrorLevel.
+		// Also, RAW is safe because loadtime validation ensured there is at least 1 arg.
 		if_condition = (ARGVARRAW1 && !*ARG1 && ARGVARRAW1->Type() == VAR_NORMAL)
 			? LegacyVarToBOOL(*ARGVARRAW1) // 30% faster than having ExpandArgs() resolve ARG1 even when it's a naked variable.
 			: LegacyResultToBOOL(ARG1); // CAN'T simply check *ARG1=='1' because the loadtime routine has various ways of setting if_expresion to false for things that are normally expressions.
@@ -13014,8 +12515,8 @@ ResultType Line::EvaluateCondition() // __forceinline on this reduces benchmarks
 		// RAW is safe (for arg_var1) because loadtime validation ensured there is at least 1 arg.
 		// For arg_var1, it isn't necessary to check ARGVARRAW1!=NULL because arg1 is ARG_TYPE_INPUT_VAR
 		// for all the commands that use these macros, so loadtime validation ensures ARGVARRAW1!=NULL.
-#undef DETERMINE_NUMERIC_TYPES
-#define DETERMINE_NUMERIC_TYPES \
+		#undef DETERMINE_NUMERIC_TYPES
+		#define DETERMINE_NUMERIC_TYPES \
 			if (arg2_has_binary_integer = mArgc > 1 && mArg[1].postfix && !mArg[1].is_expression)\
 			{\
 				arg_var2 = NULL;\
@@ -13031,7 +12532,7 @@ ResultType Line::EvaluateCondition() // __forceinline on this reduces benchmarks
 			var_is_pure_numeric = arg_var1 ? arg_var1->IsNonBlankIntegerOrFloat()\
 				: IsPureNumeric(ARG1, true, false, true);
 
-#define DETERMINE_NUMERIC_TYPES2 \
+		#define DETERMINE_NUMERIC_TYPES2 \
 			DETERMINE_NUMERIC_TYPES \
 			if (arg3_has_binary_integer = mArgc > 2 && mArg[2].postfix && !mArg[2].is_expression)\
 			{\
@@ -13044,38 +12545,38 @@ ResultType Line::EvaluateCondition() // __forceinline on this reduces benchmarks
 				value2_is_pure_numeric = arg_var3 ? arg_var3->IsNonBlankIntegerOrFloat()\
 					: IsPureNumeric(ARG3, true, false, true);\
 			}
-#define ARG1_AS_STRING (arg_var1 ? arg_var1->Contents() : ARG1)
-#define ARG2_AS_STRING (arg_var2 ? arg_var2->Contents() : ARG2)
-#define ARG3_AS_STRING (arg_var3 ? arg_var3->Contents() : ARG3)
-#define ARG1_AS_DOUBLE (arg_var1 ? arg_var1->ToDouble(TRUE) : ATOF(ARG1))
-#define ARG2_AS_DOUBLE (arg2_has_binary_integer ? (double)*(__int64*)mArg[1].postfix \
+		#define ARG1_AS_STRING (arg_var1 ? arg_var1->Contents() : ARG1)
+		#define ARG2_AS_STRING (arg_var2 ? arg_var2->Contents() : ARG2)
+		#define ARG3_AS_STRING (arg_var3 ? arg_var3->Contents() : ARG3)
+		#define ARG1_AS_DOUBLE (arg_var1 ? arg_var1->ToDouble(TRUE) : ATOF(ARG1))
+		#define ARG2_AS_DOUBLE (arg2_has_binary_integer ? (double)*(__int64*)mArg[1].postfix \
 			: arg_var2 ? arg_var2->ToDouble(TRUE) : ATOF(ARG2))
-#define ARG3_AS_DOUBLE (arg3_has_binary_integer ? (double)*(__int64*)mArg[2].postfix \
+		#define ARG3_AS_DOUBLE (arg3_has_binary_integer ? (double)*(__int64*)mArg[2].postfix \
 			: arg_var3 ? arg_var3->ToDouble(TRUE) : ATOF(ARG3))
-#define ARG1_AS_INT64 (arg_var1 ? arg_var1->ToInt64(TRUE) : ATOI64(ARG1)) // Never has a binary integer because it's ARG_TYPE_INPUT_VAR.
-#define ARG2_AS_INT64 (arg2_has_binary_integer ? *(__int64*)mArg[1].postfix \
+		#define ARG1_AS_INT64 (arg_var1 ? arg_var1->ToInt64(TRUE) : ATOI64(ARG1)) // Never has a binary integer because it's ARG_TYPE_INPUT_VAR.
+		#define ARG2_AS_INT64 (arg2_has_binary_integer ? *(__int64*)mArg[1].postfix \
 			: arg_var2 ? arg_var2->ToInt64(TRUE) : ATOI64(ARG2))
-#define ARG3_AS_INT64 (arg3_has_binary_integer ? *(__int64*)mArg[2].postfix \
+		#define ARG3_AS_INT64 (arg3_has_binary_integer ? *(__int64*)mArg[2].postfix \
 			: arg_var3 ? arg_var3->ToInt64(TRUE) : ATOI64(ARG3))
-#define IF_EITHER_IS_NON_NUMERIC if (!value_is_pure_numeric || !var_is_pure_numeric)
-#define IF_EITHER_IS_NON_NUMERIC2 if (!value_is_pure_numeric || !value2_is_pure_numeric || !var_is_pure_numeric)
-#undef IF_EITHER_IS_FLOAT
-#define IF_EITHER_IS_FLOAT if (value_is_pure_numeric == PURE_FLOAT || var_is_pure_numeric == PURE_FLOAT)
+		#define IF_EITHER_IS_NON_NUMERIC if (!value_is_pure_numeric || !var_is_pure_numeric)
+		#define IF_EITHER_IS_NON_NUMERIC2 if (!value_is_pure_numeric || !value2_is_pure_numeric || !var_is_pure_numeric)
+		#undef IF_EITHER_IS_FLOAT
+		#define IF_EITHER_IS_FLOAT if (value_is_pure_numeric == PURE_FLOAT || var_is_pure_numeric == PURE_FLOAT)
 
 		// In the below, it isn't necessary to check ARGVARRAW1!=NULL because arg1 is ARG_TYPE_INPUT_VAR
 		// for all the commands that use these macros, so loadtime validation ensures ARGVARRAW1!=NULL.
 		if (mArgc > 1 && ARGVARRAW1->IsBinaryClip() && ARGVARRAW2 && ARGVARRAW2->IsBinaryClip())
 			if_condition = (ARGVARRAW1->Length() == ARGVARRAW2->Length()) // Accessing ARGVARRAW in all these places is safe due to the check mArgc > 1.
-			&& !tmemcmp(ARGVARRAW1->Contents(), ARGVARRAW2->Contents(), ARGVARRAW1->Length());
+				&& !tmemcmp(ARGVARRAW1->Contents(), ARGVARRAW2->Contents(), ARGVARRAW1->Length());
 		else
 		{
 			DETERMINE_NUMERIC_TYPES
-				IF_EITHER_IS_NON_NUMERIC
+			IF_EITHER_IS_NON_NUMERIC
 				if_condition = !g_tcscmp(ARG1_AS_STRING, ARG2_AS_STRING);
-else IF_EITHER_IS_FLOAT  // It might perform better to only do float conversions & math when necessary.
-if_condition = ARG1_AS_DOUBLE == ARG2_AS_DOUBLE;
-else
-if_condition = ARG1_AS_INT64 == ARG2_AS_INT64;
+			else IF_EITHER_IS_FLOAT  // It might perform better to only do float conversions & math when necessary.
+				if_condition = ARG1_AS_DOUBLE == ARG2_AS_DOUBLE;
+			else
+				if_condition = ARG1_AS_INT64 == ARG2_AS_INT64;
 		}
 		if (mActionType == ACT_IFNOTEQUAL)
 			if_condition = !if_condition;
@@ -13084,24 +12585,24 @@ if_condition = ARG1_AS_INT64 == ARG2_AS_INT64;
 	case ACT_IFLESS:
 	case ACT_IFGREATEROREQUAL:
 		DETERMINE_NUMERIC_TYPES
-			IF_EITHER_IS_NON_NUMERIC
+		IF_EITHER_IS_NON_NUMERIC
 			if_condition = g_tcscmp(ARG1_AS_STRING, ARG2_AS_STRING) < 0;
 		else IF_EITHER_IS_FLOAT  // It might perform better to only do float conversions & math when necessary.
 			if_condition = ARG1_AS_DOUBLE < ARG2_AS_DOUBLE;
-else
-if_condition = ARG1_AS_INT64 < ARG2_AS_INT64;
+		else
+			if_condition = ARG1_AS_INT64 < ARG2_AS_INT64;
 		if (mActionType == ACT_IFGREATEROREQUAL)
 			if_condition = !if_condition;
 		break;
 	case ACT_IFGREATER:
 	case ACT_IFLESSOREQUAL:
 		DETERMINE_NUMERIC_TYPES
-			IF_EITHER_IS_NON_NUMERIC
+		IF_EITHER_IS_NON_NUMERIC
 			if_condition = g_tcscmp(ARG1_AS_STRING, ARG2_AS_STRING) > 0;
 		else IF_EITHER_IS_FLOAT  // It might perform better to only do float conversions & math when necessary.
 			if_condition = ARG1_AS_DOUBLE > ARG2_AS_DOUBLE;
-else
-if_condition = ARG1_AS_INT64 > ARG2_AS_INT64;
+		else
+			if_condition = ARG1_AS_INT64 > ARG2_AS_INT64;
 		if (mActionType == ACT_IFLESSOREQUAL)
 			if_condition = !if_condition;
 		break;
@@ -13111,31 +12612,31 @@ if_condition = ARG1_AS_INT64 > ARG2_AS_INT64;
 		// Using the new macros is up to 62% faster than the old way that didn't exploit the ability of
 		// one or more of the args involved to be variables that can cache binary numbers.
 		DETERMINE_NUMERIC_TYPES2
-			IF_EITHER_IS_NON_NUMERIC2
+		IF_EITHER_IS_NON_NUMERIC2
 		{
 			LPTSTR arg1_as_string = ARG1_AS_STRING; // Resolve only once.
-		LPTSTR arg2_as_string = ARG2_AS_STRING; //
-		LPTSTR arg3_as_string = ARG3_AS_STRING; //
-		if (g->StringCaseSense == SCS_INSENSITIVE) // The most common mode is listed first for performance.
-			if_condition = !(_tcsicmp(arg1_as_string, arg2_as_string) < 0 || _tcsicmp(arg1_as_string, arg3_as_string) > 0);
-		else if (g->StringCaseSense == SCS_INSENSITIVE_LOCALE)
-			if_condition = lstrcmpi(arg1_as_string, arg2_as_string) > -1 && lstrcmpi(arg1_as_string, arg3_as_string) < 1;
-		else  // case sensitive
-			if_condition = !(_tcscmp(arg1_as_string, arg2_as_string) < 0 || _tcscmp(arg1_as_string, arg3_as_string) > 0);
+			LPTSTR arg2_as_string = ARG2_AS_STRING; //
+			LPTSTR arg3_as_string = ARG3_AS_STRING; //
+			if (g->StringCaseSense == SCS_INSENSITIVE) // The most common mode is listed first for performance.
+				if_condition = !(_tcsicmp(arg1_as_string, arg2_as_string) < 0 || _tcsicmp(arg1_as_string, arg3_as_string) > 0);
+			else if (g->StringCaseSense == SCS_INSENSITIVE_LOCALE)
+				if_condition = lstrcmpi(arg1_as_string, arg2_as_string) > -1 && lstrcmpi(arg1_as_string, arg3_as_string) < 1;
+			else  // case sensitive
+				if_condition = !(_tcscmp(arg1_as_string, arg2_as_string) < 0 || _tcscmp(arg1_as_string, arg3_as_string) > 0);
 		}
 		else IF_EITHER_IS_FLOAT
 		{
 			double arg1_as_double = ARG1_AS_DOUBLE;
-		if_condition = arg1_as_double >= ARG2_AS_DOUBLE && arg1_as_double <= ARG3_AS_DOUBLE;
+			if_condition = arg1_as_double >= ARG2_AS_DOUBLE && arg1_as_double <= ARG3_AS_DOUBLE;
 		}
-else
+		else
 		{
 			__int64 arg1_as_int64 = ARG1_AS_INT64;
 			if_condition = arg1_as_int64 >= ARG2_AS_INT64 && arg1_as_int64 <= ARG3_AS_INT64;
 		}
-					   if (mActionType == ACT_IFNOTBETWEEN)
-						   if_condition = !if_condition;
-					   break;
+		if (mActionType == ACT_IFNOTBETWEEN)
+			if_condition = !if_condition;
+		break;
 
 	case ACT_IFINSTRING:
 	case ACT_IFNOTINSTRING:
@@ -13182,7 +12683,7 @@ else
 		// for all the commands that use these macros, so loadtime validation ensures ARGVARRAW1!=NULL.
 		arg_var1 = (ARGVARRAW1->Type() == VAR_NORMAL) ? ARGVARRAW1 : NULL;
 
-		switch (variable_type)
+		switch(variable_type)
 		{
 		case VAR_TYPE_NUMBER:
 			if_condition = arg_var1 ? arg_var1->IsNonBlankIntegerOrFloat()
@@ -13326,31 +12827,14 @@ else
 	return if_condition ? CONDITION_TRUE : CONDITION_FALSE;
 }
 
-
-// Evaluate an #If expression (in a thread created by the caller).
-ResultType Line::EvaluateHotCriterionExpression()
-{
-	g_script.mCurrLine = this; // Added in v1.1.16 to fix A_LineFile and A_LineNumber.
-
-	if (g->ListLinesIsEnabled)
-		LOG_LINE(this)
-
-		ResultType result = ExpandArgs();
-	if (result == OK)
-		result = EvaluateCondition();
-
-	return result;
-}
-
-
-// Evaluate an #If expression or callback function.
-// This is called by MainWindowProc when it receives an AHK_HOT_IF_EVAL message.
-ResultType HotkeyCriterion::Eval(LPTSTR aHotkeyName)
+// L4: Evaluate an expression used to define #if hotkey variant criterion.
+//	This is called by MainWindowProc when it receives an AHK_HOT_IF_EXPR message.
+ResultType Line::EvaluateHotCriterionExpression(LPTSTR aHotkeyName)
 {
 	// Initialize a new quasi-thread to evaluate the expression. This may not be necessary for simple
 	// expressions, but expressions which call user-defined functions may otherwise interfere with
 	// whatever quasi-thread is running when the hook thread requests that this expression be evaluated.
-
+	
 	// Based on parts of MsgMonitor(). See there for comments.
 
 	if (g_nThreads >= g_MaxThreadsTotal)
@@ -13362,6 +12846,7 @@ ResultType HotkeyCriterion::Eval(LPTSTR aHotkeyName)
 	// Critical seems to improve reliability, either because the thread completes faster (i.e. before the timeout) or because we check for messages less often.
 	InitNewThread(0, false, true, ACT_CRITICAL);
 	ResultType result;
+	DEBUGGER_STACK_PUSH(_T("#If"))
 
 	// Update A_ThisHotkey, useful if #If calls a function to do its dirty work.
 	LPTSTR prior_hotkey_name[] = { g_script.mThisHotkeyName, g_script.mPriorHotkeyName };
@@ -13370,23 +12855,17 @@ ResultType HotkeyCriterion::Eval(LPTSTR aHotkeyName)
 	g_script.mPriorHotkeyStartTime = g_script.mThisHotkeyStartTime; //
 	g_script.mThisHotkeyName = aHotkeyName;
 	g_script.mThisHotkeyStartTime = // Updated for consistency.
-		g_script.mLastScriptRest = g_script.mLastPeekTime = GetTickCount();
+	g_script.mLastScriptRest = g_script.mLastPeekTime = GetTickCount();
 
-	// EVALUATE THE EXPRESSION OR CALL THE CALLBACK
-	if (Type == HOT_IF_EXPR)
-	{
-		DEBUGGER_STACK_PUSH(_T("#If"))
-			result = ExprLine->EvaluateHotCriterionExpression();
-		DEBUGGER_STACK_POP()
-	}
-	else
-	{
-		ExprTokenType param = aHotkeyName;
-		INT_PTR retval;
-		result = LabelPtr(Callback)->ExecuteInNewThread(_T("#If"), &param, 1, &retval);
-		if (result != FAIL)
-			result = retval ? CONDITION_TRUE : CONDITION_FALSE;
-	}
+	g_script.mCurrLine = this; // Added in v1.1.16 to fix A_LineFile and A_LineNumber.
+
+	if (g->ListLinesIsEnabled)
+		LOG_LINE(this)
+
+	// EVALUATE THE EXPRESSION
+	result = ExpandArgs();
+	if (result == OK)
+		result = EvaluateCondition();
 
 	// The following allows the expression to set the Last Found Window for the
 	// hotkey subroutine, so that #if WinActive(T) and similar behave like #IfWin.
@@ -13395,12 +12874,13 @@ ResultType HotkeyCriterion::Eval(LPTSTR aHotkeyName)
 	// to be any easy way around that.
 	g_HotExprLFW = g->hWndLastUsed; // Even if above failed, for simplicity.
 
-									// A_ThisHotkey must be restored else A_PriorHotkey will get an incorrect value later.
+	// A_ThisHotkey must be restored else A_PriorHotkey will get an incorrect value later.
 	g_script.mThisHotkeyName = prior_hotkey_name[0];
 	g_script.mThisHotkeyStartTime = prior_hotkey_time[0];
 	g_script.mPriorHotkeyName = prior_hotkey_name[1];
 	g_script.mPriorHotkeyStartTime = prior_hotkey_time[1];
 
+	DEBUGGER_STACK_POP()
 	ResumeUnderlyingThread(ErrorLevel_saved);
 
 	return result;
@@ -13409,8 +12889,8 @@ ResultType HotkeyCriterion::Eval(LPTSTR aHotkeyName)
 
 ResultType Line::PerformLoop(ExprTokenType *aResultToken, bool &aContinueMainLoop, Line *&aJumpToLine, Line *aUntil
 	, __int64 aIterationLimit, bool aIsInfinite) // bool performs better than BOOL in current benchmarks for this.
-												 // This performs much better (by at least 7%) as a function than as inline code, probably because
-												 // it's only called to set up the loop, not each time through the loop.
+// This performs much better (by at least 7%) as a function than as inline code, probably because
+// it's only called to set up the loop, not each time through the loop.
 {
 	ResultType result;
 	Line *jump_to_line;
@@ -13448,7 +12928,7 @@ ResultType Line::PerformLoop(ExprTokenType *aResultToken, bool &aContinueMainLoo
 			result = mNextLine->ExecUntil(ONLY_ONE_LINE, aResultToken, &jump_to_line);
 		if (jump_to_line && !(result == LOOP_CONTINUE && jump_to_line == this)) // i.e. "goto somewhere" or "continue a_loop_which_encloses_this_one".
 		{
-			if (jump_to_line == this)
+			if (jump_to_line == this) 
 				// Since this LOOP's ExecUntil() encountered a Goto whose target is the LOOP
 				// itself, continue with the for-loop without moving to a different
 				// line.  Also: stay in this recursion layer even if aMode == ONLY_ONE_LINE
@@ -13477,7 +12957,7 @@ ResultType Line::PerformLoop(ExprTokenType *aResultToken, bool &aContinueMainLoo
 		// iteration was cut short).  In both cases, just continue on through the loop.
 	} // for()
 
-	  // The script's loop is now over.
+	// The script's loop is now over.
 	return OK;
 }
 
@@ -13494,10 +12974,10 @@ ResultType Line::PerformLoopWhile(ExprTokenType *aResultToken, bool &aContinueMa
 	{
 		g_script.mCurrLine = this; // For error-reporting purposes.
 #ifdef CONFIG_DEBUGGER
-								   // L31: Let the debugger break at the 'While' line each iteration. Before this change,
-								   // a While loop with empty body such as While FuncWithSideEffect() {} would be "hit"
-								   // (via breakpoint or step) only once even if the loop had multiple iterations.
-								   // A_Index was also reported as "0"; it will now be reported correctly.
+		// L31: Let the debugger break at the 'While' line each iteration. Before this change,
+		// a While loop with empty body such as While FuncWithSideEffect() {} would be "hit"
+		// (via breakpoint or step) only once even if the loop had multiple iterations.
+		// A_Index was also reported as "0"; it will now be reported correctly.
 		if (g_Debugger.IsConnected())
 			g_Debugger.PreExecLine(this);
 #endif
@@ -13517,7 +12997,7 @@ ResultType Line::PerformLoopWhile(ExprTokenType *aResultToken, bool &aContinueMa
 		if (mNextLine->mActionType == ACT_BLOCK_BEGIN)
 			do
 				result = mNextLine->mNextLine->ExecUntil(UNTIL_BLOCK_END, aResultToken, &jump_to_line);
-		while (jump_to_line == mNextLine);
+			while (jump_to_line == mNextLine);
 		else
 			result = mNextLine->ExecUntil(ONLY_ONE_LINE, aResultToken, &jump_to_line);
 		if (jump_to_line && !(result == LOOP_CONTINUE && jump_to_line == this))
@@ -13567,14 +13047,14 @@ ResultType Line::PerformLoopFor(ExprTokenType *aResultToken, bool &aContinueMain
 	Line *jump_to_line;
 	global_struct &g = *::g; // Might slightly speed up the loop below.
 
-							 // Save these pointers since they will be overwritten during the loop:
+	// Save these pointers since they will be overwritten during the loop:
 	Var *var[] = { ARGVARRAW1, ARGVARRAW2 };
-
+	
 	if (!sDerefBuf)
 	{
 		// This must be done in case ExpandExpression() needs the deref buf for temporary storage.
 		sDerefBufSize = (mArg[2].length < MAX_NUMBER_LENGTH ? MAX_NUMBER_LENGTH : mArg[2].length) + 1; // See EXPR_BUF_SIZE macro in script_expression.cpp.
-		if (!(sDerefBuf = tmalloc(sDerefBufSize)))
+		if ( !(sDerefBuf = tmalloc(sDerefBufSize)) )
 		{
 			sDerefBufSize = 0;
 			return LineError(ERR_OUTOFMEM);
@@ -13583,32 +13063,32 @@ ResultType Line::PerformLoopFor(ExprTokenType *aResultToken, bool &aContinueMain
 
 	PRIVATIZE_S_DEREF_BUF;
 	LPTSTR our_buf_marker = our_deref_buf;
-	LPTSTR arg_deref[] = { 0, 0 }; // ExpandExpression checks these if it needs to expand the deref buffer.
+	LPTSTR arg_deref[] = {0, 0}; // ExpandExpression checks these if it needs to expand the deref buffer.
 	ExprTokenType object_token;
 	object_token.symbol = SYM_INVALID; // Init in case ExpandExpression() resolves to a string, in which case it won't use enum_token.
 
-									   // Since expressions aren't normally capable of resolving to an object (except for RETURN), we need to
-									   // call ExpandExpression() directly and pass in a "result token" which will be used if the result is an
-									   // object or number. Load-time pre-parsing has ensured there are really three args, but mArgc == 2 so
-									   // this one hasn't been evaluated yet:
+	// Since expressions aren't normally capable of resolving to an object (except for RETURN), we need to
+	// call ExpandExpression() directly and pass in a "result token" which will be used if the result is an
+	// object or number. Load-time pre-parsing has ensured there are really three args, but mArgc == 2 so
+	// this one hasn't been evaluated yet:
 	if (ExpandExpression(2, result, &object_token, our_buf_marker, our_deref_buf, our_deref_buf_size, arg_deref, 0))
 		result = OK;
-
+	
 	DEPRIVATIZE_S_DEREF_BUF
 
-		if (result == FAIL || result == EARLY_EXIT)
-			// A script-function-call inside the expression returned EARLY_EXIT or FAIL.
-			return result;
+	if (result == FAIL || result == EARLY_EXIT)
+		// A script-function-call inside the expression returned EARLY_EXIT or FAIL.
+		return result;
 
 	if (object_token.symbol != SYM_OBJECT)
 		// The expression didn't resolve to an object, so no enumerator is available.
 		return OK;
-
+	
 	TCHAR buf[MAX_NUMBER_SIZE]; // Small buffer which may be used by object->Invoke().
-
+	
 	ExprTokenType enum_token;
 	ExprTokenType param_tokens[3];
-	ExprTokenType *params[] = { param_tokens, param_tokens + 1, param_tokens + 2 };
+	ExprTokenType *params[] = { param_tokens, param_tokens+1, param_tokens+2 };
 	int param_count;
 
 	// Set up enum_token the way Invoke expects:
@@ -13627,7 +13107,7 @@ ResultType Line::PerformLoopFor(ExprTokenType *aResultToken, bool &aContinueMain
 	if (enum_token.mem_to_free)
 		// Invoke returned memory for us to free.
 		free(enum_token.mem_to_free);
-
+	
 	if (result == FAIL || result == EARLY_EXIT)
 		return result;
 
@@ -13698,7 +13178,7 @@ ResultType Line::PerformLoopFor(ExprTokenType *aResultToken, bool &aContinueMain
 		if (mNextLine->mActionType == ACT_BLOCK_BEGIN)
 			do
 				result = mNextLine->mNextLine->ExecUntil(UNTIL_BLOCK_END, aResultToken, &jump_to_line);
-		while (jump_to_line == mNextLine);
+			while (jump_to_line == mNextLine);
 		else
 			result = mNextLine->ExecUntil(ONLY_ONE_LINE, aResultToken, &jump_to_line);
 		if (jump_to_line && !(result == LOOP_CONTINUE && jump_to_line == this))
@@ -13722,10 +13202,10 @@ ResultType Line::PerformLoopFor(ExprTokenType *aResultToken, bool &aContinueMain
 
 ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aContinueMainLoop, Line *&aJumpToLine, Line *aUntil
 	, FileLoopModeType aFileLoopMode, bool aRecurseSubfolders, LPTSTR aFilePattern)
-	// Note: Even if aFilePattern is just a directory (i.e. with not wildcard pattern), it seems best
-	// not to append "\\*.*" to it because the pattern might be a script variable that the user wants
-	// to conditionally resolve to various things at runtime.  In other words, it's valid to have
-	// only a single directory be the target of the loop.
+// Note: Even if aFilePattern is just a directory (i.e. with not wildcard pattern), it seems best
+// not to append "\\*.*" to it because the pattern might be a script variable that the user wants
+// to conditionally resolve to various things at runtime.  In other words, it's valid to have
+// only a single directory be the target of the loop.
 {
 	// Make a local copy of the path given in aFilePattern because as the lines of
 	// the loop are executed, the deref buffer (which is what aFilePattern might
@@ -13755,7 +13235,7 @@ ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aCont
 	BOOL file_found;
 	WIN32_FIND_DATA new_current_file;
 	HANDLE file_search = FindFirstFile(aFilePattern, &new_current_file);
-	for (file_found = (file_search != INVALID_HANDLE_VALUE) // Convert FindFirst's return value into a boolean so that it's compatible with FindNext's.
+	for ( file_found = (file_search != INVALID_HANDLE_VALUE) // Convert FindFirst's return value into a boolean so that it's compatible with FindNext's.
 		; file_found && FileIsFilteredOut(new_current_file, aFileLoopMode, file_path, file_path_length)
 		; file_found = FindNextFile(file_search, &new_current_file));
 	// file_found and new_current_file have now been set for use below.
@@ -13768,15 +13248,15 @@ ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aCont
 	for (; file_found; ++g.mLoopIteration)
 	{
 		g.mLoopFile = &new_current_file; // inner file-loop's file takes precedence over any outer file-loop's.
-										 // Other types of loops leave g.mLoopFile unchanged so that a file-loop can enclose some other type of
-										 // inner loop, and that inner loop will still have access to the outer loop's current file.
+		// Other types of loops leave g.mLoopFile unchanged so that a file-loop can enclose some other type of
+		// inner loop, and that inner loop will still have access to the outer loop's current file.
 
-										 // Execute once the body of the loop (either just one statement or a block of statements).
-										 // Preparser has ensured that every LOOP has a non-NULL next line.
+		// Execute once the body of the loop (either just one statement or a block of statements).
+		// Preparser has ensured that every LOOP has a non-NULL next line.
 		if (mNextLine->mActionType == ACT_BLOCK_BEGIN) // See PerformLoop() for comments about this section.
 			do
 				result = mNextLine->mNextLine->ExecUntil(UNTIL_BLOCK_END, aResultToken, &jump_to_line);
-		while (jump_to_line == mNextLine);
+			while (jump_to_line == mNextLine);
 		else
 			result = mNextLine->ExecUntil(ONLY_ONE_LINE, aResultToken, &jump_to_line);
 		if (jump_to_line && !(result == LOOP_CONTINUE && jump_to_line == this)) // See comments in PerformLoop() about this section.
@@ -13788,8 +13268,8 @@ ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aCont
 			FindClose(file_search);
 			return result;
 		}
-		if (result != OK && result != LOOP_CONTINUE // i.e. result == LOOP_BREAK || result == EARLY_RETURN || result == EARLY_EXIT || result == FAIL)
-			|| (aUntil && aUntil->EvaluateLoopUntil(result)))
+		if ( result != OK && result != LOOP_CONTINUE // i.e. result == LOOP_BREAK || result == EARLY_RETURN || result == EARLY_EXIT || result == FAIL)
+			|| (aUntil && aUntil->EvaluateLoopUntil(result)) )
 		{
 			FindClose(file_search);
 			// Although ExecUntil() will treat the LOOP_BREAK result identically to OK, we
@@ -13803,12 +13283,12 @@ ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aCont
 		// But first do end-of-iteration steps:
 		while ((file_found = FindNextFile(file_search, &new_current_file))
 			&& FileIsFilteredOut(new_current_file, aFileLoopMode, file_path, file_path_length)); // Relies on short-circuit boolean order.
-																								 // Above is a self-contained loop that keeps fetching files until there's no more files, or a file
-																								 // is found that isn't filtered out.  It also sets file_found and new_current_file for use by the
-																								 // outer loop.
+			// Above is a self-contained loop that keeps fetching files until there's no more files, or a file
+			// is found that isn't filtered out.  It also sets file_found and new_current_file for use by the
+			// outer loop.
 	} // for()
 
-	  // The script's loop is now over.
+	// The script's loop is now over.
 	if (file_search != INVALID_HANDLE_VALUE)
 		FindClose(file_search);
 
@@ -13831,7 +13311,7 @@ ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aCont
 	file_search = FindFirstFile(file_path, &new_current_file);
 	if (file_search == INVALID_HANDLE_VALUE)
 		return OK; // Nothing more to do.
-				   // Otherwise, recurse into any subdirectories found inside this parent directory.
+	// Otherwise, recurse into any subdirectories found inside this parent directory.
 
 	size_t path_and_pattern_length = file_path_length + _tcslen(naked_filename_or_pattern); // Calculated only once for performance.
 	do
@@ -13839,20 +13319,20 @@ ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aCont
 		if (!(new_current_file.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) // We only want directories (except "." and "..").
 			|| new_current_file.cFileName[0] == '.' && (!new_current_file.cFileName[1]      // Relies on short-circuit boolean order.
 				|| new_current_file.cFileName[1] == '.' && !new_current_file.cFileName[2])  //
-																							// v1.0.45.03: Skip over folders whose full-path-names are too long to be supported by the ANSI
-																							// versions of FindFirst/FindNext.  Without this fix, the section below formerly called PerformLoop()
-																							// with a truncated full-path-name, which caused the last_backslash-finding logic to find the wrong
-																							// backslash, which in turn caused infinite recursion and a stack overflow (i.e. caused by the
-																							// full-path-name getting truncated in the same spot every time, endlessly).
+			// v1.0.45.03: Skip over folders whose full-path-names are too long to be supported by the ANSI
+			// versions of FindFirst/FindNext.  Without this fix, the section below formerly called PerformLoop()
+			// with a truncated full-path-name, which caused the last_backslash-finding logic to find the wrong
+			// backslash, which in turn caused infinite recursion and a stack overflow (i.e. caused by the
+			// full-path-name getting truncated in the same spot every time, endlessly).
 			|| path_and_pattern_length + _tcslen(new_current_file.cFileName) > _countof(file_path) - 2) // -2 to reflect: 1) the backslash to be added between cFileName and naked_filename_or_pattern; 2) the zero terminator.
 			continue;
 		// Build the new search pattern, which consists of the original file_path + the subfolder name
 		// we just discovered + the original pattern:
 		_stprintf(append_pos, _T("%s\\%s"), new_current_file.cFileName, naked_filename_or_pattern); // Indirectly set file_path to the new search pattern.  This won't overflow due to the check above.
-																									// Pass NULL for the 2nd param because it will determine its own current-file when it does
-																									// its first loop iteration.  This is because this directory is being recursed into, not
-																									// processed itself as a file-loop item (since this was already done in the first loop,
-																									// above, if its name matches the original search pattern):
+		// Pass NULL for the 2nd param because it will determine its own current-file when it does
+		// its first loop iteration.  This is because this directory is being recursed into, not
+		// processed itself as a file-loop item (since this was already done in the first loop,
+		// above, if its name matches the original search pattern):
 		result = PerformLoopFilePattern(aResultToken, aContinueMainLoop, aJumpToLine, aUntil, aFileLoopMode, aRecurseSubfolders, file_path);
 		// Above returns LOOP_CONTINUE for cases like "continue 2" or "continue outer_loop", where the
 		// target is not this Loop but a Loop which encloses it. In those cases we want below to return:
@@ -13877,9 +13357,9 @@ ResultType Line::PerformLoopFilePattern(ExprTokenType *aResultToken, bool &aCont
 
 ResultType Line::PerformLoopReg(ExprTokenType *aResultToken, bool &aContinueMainLoop, Line *&aJumpToLine, Line *aUntil
 	, FileLoopModeType aFileLoopMode, bool aRecurseSubfolders, HKEY aRootKeyType, HKEY aRootKey, LPTSTR aRegSubkey)
-	// aRootKeyType is the type of root key, independent of whether it's local or remote.
-	// This is used because there's no easy way to determine which root key a remote HKEY
-	// refers to.
+// aRootKeyType is the type of root key, independent of whether it's local or remote.
+// This is used because there's no easy way to determine which root key a remote HKEY
+// refers to.
 {
 	RegItemStruct reg_item(aRootKeyType, aRootKey, aRegSubkey);
 	HKEY hRegKey;
@@ -13905,9 +13385,9 @@ ResultType Line::PerformLoopReg(ExprTokenType *aResultToken, bool &aContinueMain
 	DWORD i;
 	global_struct &g = *::g; // Primarily for performance in this case.
 
-							 // See comments in PerformLoop() for details about this section.
-							 // Note that &reg_item is passed to ExecUntil() rather than... (comment was never finished).
-#define MAKE_SCRIPT_LOOP_PROCESS_THIS_ITEM \
+	// See comments in PerformLoop() for details about this section.
+	// Note that &reg_item is passed to ExecUntil() rather than... (comment was never finished).
+	#define MAKE_SCRIPT_LOOP_PROCESS_THIS_ITEM \
 	{\
 		g.mLoopRegItem = &reg_item;\
 		if (mNextLine->mActionType == ACT_BLOCK_BEGIN)\
@@ -13943,17 +13423,17 @@ ResultType Line::PerformLoopReg(ExprTokenType *aResultToken, bool &aContinueMain
 		reg_item.InitForValues();
 		// Going in reverse order allows values to be deleted without disrupting the enumeration,
 		// at least in some cases:
-		for (i = count_values - 1;; --i)
-		{
+		for (i = count_values - 1;; --i) 
+		{ 
 			// Don't use CONTINUE in loops such as this due to the loop-ending condition being explicitly
 			// checked at the bottom.
 			name_size = _countof(reg_item.name);  // Must reset this every time through the loop.
 			*reg_item.name = '\0';
 			if (RegEnumValue(hRegKey, i, reg_item.name, &name_size, NULL, &reg_item.type, NULL, NULL) == ERROR_SUCCESS)
 				MAKE_SCRIPT_LOOP_PROCESS_THIS_ITEM
-				// else continue the loop in case some of the lower indexes can still be retrieved successfully.
-				if (i == 0)  // Check this here due to it being an unsigned value that we don't want to go negative.
-					break;
+			// else continue the loop in case some of the lower indexes can still be retrieved successfully.
+			if (i == 0)  // Check this here due to it being an unsigned value that we don't want to go negative.
+				break;
 		}
 	}
 
@@ -13979,25 +13459,25 @@ ResultType Line::PerformLoopReg(ExprTokenType *aResultToken, bool &aContinueMain
 		{
 			if (aFileLoopMode != FILE_LOOP_FILES_ONLY) // have the script's loop process this subkey.
 				MAKE_SCRIPT_LOOP_PROCESS_THIS_ITEM
-				if (aRecurseSubfolders) // Now recurse into the subkey, regardless of whether it was processed above.
+			if (aRecurseSubfolders) // Now recurse into the subkey, regardless of whether it was processed above.
+			{
+				// Build the new subkey name using the an area of memory on the stack that we won't need
+				// after the recursive call returns to us.  Omit the leading backslash if subkey is blank,
+				// which supports recursively searching the contents of keys contained within a root key
+				// (fixed for v1.0.17):
+				sntprintf(subkey_full_path, _countof(subkey_full_path), _T("%s%s%s"), reg_item.subkey
+					, *reg_item.subkey ? _T("\\") : _T(""), reg_item.name);
+				// This section is very similar to the one in PerformLoopFilePattern(), so see it for comments:
+				result = PerformLoopReg(aResultToken, aContinueMainLoop, aJumpToLine, aUntil
+					, aFileLoopMode , aRecurseSubfolders, aRootKeyType, aRootKey, subkey_full_path);
+				if (result != OK)
 				{
-					// Build the new subkey name using the an area of memory on the stack that we won't need
-					// after the recursive call returns to us.  Omit the leading backslash if subkey is blank,
-					// which supports recursively searching the contents of keys contained within a root key
-					// (fixed for v1.0.17):
-					sntprintf(subkey_full_path, _countof(subkey_full_path), _T("%s%s%s"), reg_item.subkey
-						, *reg_item.subkey ? _T("\\") : _T(""), reg_item.name);
-					// This section is very similar to the one in PerformLoopFilePattern(), so see it for comments:
-					result = PerformLoopReg(aResultToken, aContinueMainLoop, aJumpToLine, aUntil
-						, aFileLoopMode, aRecurseSubfolders, aRootKeyType, aRootKey, subkey_full_path);
-					if (result != OK)
-					{
-						RegCloseKey(hRegKey);
-						return result;
-					}
-					if (aContinueMainLoop || aJumpToLine)
-						break;
+					RegCloseKey(hRegKey);
+					return result;
 				}
+				if (aContinueMainLoop || aJumpToLine)
+					break;
+			}
 		}
 		// else continue the loop in case some of the lower indexes can still be retrieved successfully.
 		if (i == 0)  // Check this here due to it being an unsigned value that we don't want to go negative.
@@ -14031,8 +13511,8 @@ ResultType Line::PerformLoopParse(ExprTokenType *aResultToken, bool &aContinueMa
 	// cause memory fragmentation (especially with thousands of calls):
 	size_t space_needed = ArgLength(2) + 1;  // +1 for the zero terminator.
 	LPTSTR stack_buf, buf;
-#define FREE_PARSE_MEMORY if (buf != stack_buf) free(buf)  // Also used by the CSV version of this function.
-#define LOOP_PARSE_BUF_SIZE 40000                          //
+	#define FREE_PARSE_MEMORY if (buf != stack_buf) free(buf)  // Also used by the CSV version of this function.
+	#define LOOP_PARSE_BUF_SIZE 40000                          //
 	if (space_needed <= LOOP_PARSE_BUF_SIZE)
 	{
 		stack_buf = (LPTSTR)talloca(space_needed); // Helps performance.  See comments above.
@@ -14040,7 +13520,7 @@ ResultType Line::PerformLoopParse(ExprTokenType *aResultToken, bool &aContinueMa
 	}
 	else
 	{
-		if (!(buf = tmalloc(space_needed)))
+		if (   !(buf = tmalloc(space_needed))   )
 			// Probably best to consider this a critical error, since on the rare times it does happen, the user
 			// would probably want to know about it immediately.
 			return LineError(ERR_OUTOFMEM, FAIL, ARG2);
@@ -14048,8 +13528,8 @@ ResultType Line::PerformLoopParse(ExprTokenType *aResultToken, bool &aContinueMa
 	}
 	_tcscpy(buf, ARG2); // Make the copy.
 
-						// Make a copy of ARG3 and ARG4 in case either one's contents are in the deref buffer, which would
-						// probably be overwritten by the commands in the script loop's body:
+	// Make a copy of ARG3 and ARG4 in case either one's contents are in the deref buffer, which would
+	// probably be overwritten by the commands in the script loop's body:
 	TCHAR delimiters[512], omit_list[512];
 	tcslcpy(delimiters, ARG3, _countof(delimiters));
 	tcslcpy(omit_list, ARG4, _countof(omit_list));
@@ -14061,10 +13541,10 @@ ResultType Line::PerformLoopParse(ExprTokenType *aResultToken, bool &aContinueMa
 	global_struct &g = *::g; // Primarily for performance in this case.
 
 	for (field = buf;;)
-	{
+	{ 
 		if (*delimiters)
 		{
-			if (!(field_end = StrChrAny(field, delimiters))) // No more delimiters found.
+			if (   !(field_end = StrChrAny(field, delimiters))   ) // No more delimiters found.
 				field_end = field + _tcslen(field);  // Set it to the position of the zero terminator instead.
 		}
 		else // Since no delimiters, every char in the input string is treated as a separate field.
@@ -14099,7 +13579,7 @@ ResultType Line::PerformLoopParse(ExprTokenType *aResultToken, bool &aContinueMa
 		if (mNextLine->mActionType == ACT_BLOCK_BEGIN) // See PerformLoop() for comments about this section.
 			do
 				result = mNextLine->mNextLine->ExecUntil(UNTIL_BLOCK_END, aResultToken, &jump_to_line);
-		while (jump_to_line == mNextLine);
+			while (jump_to_line == mNextLine);
 		else
 			result = mNextLine->ExecUntil(ONLY_ONE_LINE, aResultToken, &jump_to_line);
 
@@ -14112,8 +13592,8 @@ ResultType Line::PerformLoopParse(ExprTokenType *aResultToken, bool &aContinueMa
 			FREE_PARSE_MEMORY;
 			return result;
 		}
-		if (result != OK && result != LOOP_CONTINUE // i.e. result == LOOP_BREAK || result == EARLY_RETURN || result == EARLY_EXIT || result == FAIL)
-			|| (aUntil && aUntil->EvaluateLoopUntil(result)))
+		if ( result != OK && result != LOOP_CONTINUE // i.e. result == LOOP_BREAK || result == EARLY_RETURN || result == EARLY_EXIT || result == FAIL)
+			|| (aUntil && aUntil->EvaluateLoopUntil(result)) )
 		{
 			FREE_PARSE_MEMORY;
 			return result;
@@ -14149,7 +13629,7 @@ ResultType Line::PerformLoopParseCSV(ExprTokenType *aResultToken, bool &aContinu
 	}
 	else
 	{
-		if (!(buf = tmalloc(space_needed)))
+		if (   !(buf = tmalloc(space_needed))   )
 			return LineError(ERR_OUTOFMEM, FAIL, ARG2);
 		stack_buf = NULL; // For comparison purposes later below.
 	}
@@ -14182,7 +13662,7 @@ ResultType Line::PerformLoopParseCSV(ExprTokenType *aResultToken, bool &aContinu
 
 		for (field_end = field;;)
 		{
-			if (!(field_end = _tcschr(field_end, field_is_enclosed_in_quotes ? '"' : ',')))
+			if (   !(field_end = _tcschr(field_end, field_is_enclosed_in_quotes ? '"' : ','))   )
 			{
 				// This is the last field in the string, so set field_end to the position of
 				// the zero terminator instead:
@@ -14225,7 +13705,7 @@ ResultType Line::PerformLoopParseCSV(ExprTokenType *aResultToken, bool &aContinu
 		if (mNextLine->mActionType == ACT_BLOCK_BEGIN) // See PerformLoop() for comments about this section.
 			do
 				result = mNextLine->mNextLine->ExecUntil(UNTIL_BLOCK_END, aResultToken, &jump_to_line);
-		while (jump_to_line == mNextLine);
+			while (jump_to_line == mNextLine);
 		else
 			result = mNextLine->ExecUntil(ONLY_ONE_LINE, aResultToken, &jump_to_line);
 
@@ -14238,8 +13718,8 @@ ResultType Line::PerformLoopParseCSV(ExprTokenType *aResultToken, bool &aContinu
 			FREE_PARSE_MEMORY;
 			return result;
 		}
-		if (result != OK && result != LOOP_CONTINUE // i.e. result == LOOP_BREAK || result == EARLY_RETURN || result == EARLY_EXIT || result == FAIL)
-			|| (aUntil && aUntil->EvaluateLoopUntil(result)))
+		if ( result != OK && result != LOOP_CONTINUE // i.e. result == LOOP_BREAK || result == EARLY_RETURN || result == EARLY_EXIT || result == FAIL)
+			|| (aUntil && aUntil->EvaluateLoopUntil(result)) )
 		{
 			FREE_PARSE_MEMORY;
 			return result;
@@ -14255,7 +13735,7 @@ ResultType Line::PerformLoopParseCSV(ExprTokenType *aResultToken, bool &aContinu
 			if (!*field) // No more fields occur after this one.
 				break;
 			// Find the next comma, which must be a real delimiter since we're in between fields:
-			if (!(field = _tcschr(field, ','))) // No more fields.
+			if (   !(field = _tcschr(field, ','))   ) // No more fields.
 				break;
 			// Set it to be the first character of the next field, which might be a double-quote
 			// or another comma (if the field is empty).
@@ -14279,8 +13759,8 @@ ResultType Line::PerformLoopReadFile(ExprTokenType *aResultToken, bool &aContinu
 	global_struct &g = *::g; // Primarily for performance in this case.
 
 	for (;; ++g.mLoopIteration)
-	{
-		if (!(line_length = loop_info.mReadFile->ReadLine(loop_info.mCurrentLine, _countof(loop_info.mCurrentLine) - 1))) // -1 to ensure there's room for a null-terminator.
+	{ 
+		if (  !(line_length = loop_info.mReadFile->ReadLine(loop_info.mCurrentLine, _countof(loop_info.mCurrentLine) - 1))  ) // -1 to ensure there's room for a null-terminator.
 		{
 			// We want to return OK except in some specific cases handled below (see "break").
 			result = OK;
@@ -14293,7 +13773,7 @@ ResultType Line::PerformLoopReadFile(ExprTokenType *aResultToken, bool &aContinu
 		if (mNextLine->mActionType == ACT_BLOCK_BEGIN) // See PerformLoop() for comments about this section.
 			do
 				result = mNextLine->mNextLine->ExecUntil(UNTIL_BLOCK_END, aResultToken, &jump_to_line);
-		while (jump_to_line == mNextLine);
+			while (jump_to_line == mNextLine);
 		else
 			result = mNextLine->ExecUntil(ONLY_ONE_LINE, aResultToken, &jump_to_line);
 		if (jump_to_line && !(result == LOOP_CONTINUE && jump_to_line == this)) // See comments in PerformLoop() about this section.
@@ -14322,10 +13802,10 @@ ResultType Line::PerformLoopReadFile(ExprTokenType *aResultToken, bool &aContinu
 
 
 __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() reduces code size a little (since this function is called from only one place) and boosts performance a bit, though it's probably more due to the butterfly effect and cache hits/misses.
-										 // Performs only this line's action.
-										 // Returns OK or FAIL.
-										 // The function should not be called to perform any flow-control actions such as
-										 // Goto, Gosub, Return, Block-Begin, Block-End, If, Else, etc.
+// Performs only this line's action.
+// Returns OK or FAIL.
+// The function should not be called to perform any flow-control actions such as
+// Goto, Gosub, Return, Block-Begin, Block-End, If, Else, etc.
 {
 	TCHAR buf_temp[MAX_REG_ITEM_SIZE], *contents; // For registry and other things.
 	WinGroup *group; // For the group commands.
@@ -14333,7 +13813,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 	global_struct &g = *::g; // Reduces code size due to replacing so many g-> with g. Eclipsing ::g with local g makes compiler remind/enforce the use of the right one.
 	BOOL arg2_has_binary_integer;
 	ToggleValueType toggle;  // For commands that use on/off/neutral.
-							 // Use signed values for these in case they're really given an explicit negative value:
+	// Use signed values for these in case they're really given an explicit negative value:
 	int start_char_num, chars_to_extract; // For String commands.
 	size_t source_length; // For String commands.
 	SymbolType var_is_pure_numeric, value_is_pure_numeric; // For math operations.
@@ -14344,12 +13824,12 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 	LPTSTR subkey, value_name, value;
 	ResultType result;  // General purpose.
 
-						// Even though the loading-parser already checked, check again, for now,
-						// at least until testing raises confidence.  UPDATE: Don't this because
-						// sometimes (e.g. ACT_ASSIGN/ADD/SUB/MULT/DIV) the number of parameters
-						// required at load-time is different from that at runtime, because params
-						// are taken out or added to the param list:
-						//if (nArgs < g_act[mActionType].MinParams) ...
+	// Even though the loading-parser already checked, check again, for now,
+	// at least until testing raises confidence.  UPDATE: Don't this because
+	// sometimes (e.g. ACT_ASSIGN/ADD/SUB/MULT/DIV) the number of parameters
+	// required at load-time is different from that at runtime, because params
+	// are taken out or added to the param list:
+	//if (nArgs < g_act[mActionType].MinParams) ...
 
 	switch (mActionType)
 	{
@@ -14379,24 +13859,24 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			// (e.g. var:=Username); so can't apply this optimization.
 			if (ARGVARRAW2 && !*ARG2) // See above.  Also, RAW is safe due to the above check of mArgc > 1.
 			{
-				switch (ARGVARRAW2->Type())
+				switch(ARGVARRAW2->Type())
 				{
 				case VAR_NORMAL: // This can be reached via things like: x:=single_naked_var_including_binary_clip
-								 // Assign var to var in case ARGVARRAW2->IsBinaryClip(), and for others because
-								 // var-to-var has optimizations like retaining the copying over the cached binary number.
-								 // In the case of ARGVARRAW2->IsBinaryClip(), performance should be good since
-								 // IsBinaryClip() implies a single isolated deref, which would never have been copied
-								 // into the deref buffer.
-								 //
-								 // v1.0.46.01: ARGVARRAW2->IsBinaryClip() can be true because loadtime no longer translates
-								 // such statements into ACT_ASSIGN vs. ACT_ASSIGNEXPR.  Even without that change, it can also
-								 // be reached by something like:
-								 //    DynClipboardAll = ClipboardAll
-								 //    ClipSaved := %DynClipboardAll%
+					// Assign var to var in case ARGVARRAW2->IsBinaryClip(), and for others because
+					// var-to-var has optimizations like retaining the copying over the cached binary number.
+					// In the case of ARGVARRAW2->IsBinaryClip(), performance should be good since
+					// IsBinaryClip() implies a single isolated deref, which would never have been copied
+					// into the deref buffer.
+					//
+					// v1.0.46.01: ARGVARRAW2->IsBinaryClip() can be true because loadtime no longer translates
+					// such statements into ACT_ASSIGN vs. ACT_ASSIGNEXPR.  Even without that change, it can also
+					// be reached by something like:
+					//    DynClipboardAll = ClipboardAll
+					//    ClipSaved := %DynClipboardAll%
 					return output_var->Assign(*ARGVARRAW2); // Var-to-var copy supports ARGVARRAW2 being binary clipboard, and also exploits caching of binary numbers, for performance.
 				case VAR_CLIPBOARDALL:
 					return output_var->AssignClipboardAll();
-					//Otherwise it's VAR_CLIPBOARD or a read-only variable; continue on to do assign the normal way.
+				//Otherwise it's VAR_CLIPBOARD or a read-only variable; continue on to do assign the normal way.
 				}
 			}
 		}
@@ -14414,8 +13894,8 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		//    var ? func() : x:=y
 		return OK;
 
-		// Like AutoIt2, if either output_var or ARG1 aren't purely numeric, they
-		// will be considered to be zero for all of the below math functions:
+	// Like AutoIt2, if either output_var or ARG1 aren't purely numeric, they
+	// will be considered to be zero for all of the below math functions:
 	case ACT_ADD:
 		// Notes about the macro below:
 		// Ordered for short-circuit performance. No need to check if it's g_ErrorLevel (like
@@ -14423,9 +13903,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// RAW is safe because loadtime validation ensured there are at least 2 args.
 		// ACT_ADD/SUB/MULT/DIV are one of the few places that pass true to IsNonBlankIntegerOrFloat(true).
 		// This is for backward compatibility.
-#define DEFINE_ARG_VAR2 arg_var2 = (ARGVARRAW2 && !*ARG2 && ARGVARRAW2->Type() == VAR_NORMAL) ? ARGVARRAW2 : NULL;
-#undef DETERMINE_NUMERIC_TYPES
-#define DETERMINE_NUMERIC_TYPES \
+		#define DEFINE_ARG_VAR2 arg_var2 = (ARGVARRAW2 && !*ARG2 && ARGVARRAW2->Type() == VAR_NORMAL) ? ARGVARRAW2 : NULL;
+		#undef DETERMINE_NUMERIC_TYPES
+		#define DETERMINE_NUMERIC_TYPES \
 			if (arg2_has_binary_integer = mArg[1].postfix && !mArg[1].is_expression)\
 			{\
 				value_is_pure_numeric = PURE_INTEGER;\
@@ -14438,11 +13918,11 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 					: IsPureNumeric(ARG2, true, false, true, true);\
 			}\
 			var_is_pure_numeric = output_var->IsNonBlankIntegerOrFloat(true);
-#undef ARG2_AS_DOUBLE
-#undef ARG2_AS_INT64
-#define ARG2_AS_DOUBLE (arg2_has_binary_integer ? (double)*(__int64*)mArg[1].postfix \
+		#undef ARG2_AS_DOUBLE
+		#undef ARG2_AS_INT64
+		#define ARG2_AS_DOUBLE (arg2_has_binary_integer ? (double)*(__int64*)mArg[1].postfix \
 			: arg_var2 ? arg_var2->ToDouble(FALSE) : ATOF(ARG2))
-#define ARG2_AS_INT64 (arg2_has_binary_integer ? *(__int64*)mArg[1].postfix \
+		#define ARG2_AS_INT64 (arg2_has_binary_integer ? *(__int64*)mArg[1].postfix \
 			: (arg_var2 ? arg_var2->ToInt64(FALSE) : ATOI64(ARG2)))
 
 		// Some performance can be gained by relying on the fact that short-circuit boolean
@@ -14452,17 +13932,17 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// loss of maintainability and the slightly larger code size due to macro expansion:
 		//#undef IF_EITHER_IS_FLOAT
 		//#define IF_EITHER_IS_FLOAT if (value_is_pure_numeric == PURE_FLOAT \
-				//	|| IsPureNumeric(output_var->Contents(), true, false, true, true) == PURE_FLOAT)
+		//	|| IsPureNumeric(output_var->Contents(), true, false, true, true) == PURE_FLOAT)
 
 		DETERMINE_NUMERIC_TYPES
 
-			if (!*ARG3 || !_tcschr(_T("SMHD"), ctoupper(*ARG3))) // ARG3 is absent or invalid, so do normal math (not date-time).
-			{
-				IF_EITHER_IS_FLOAT
-					return output_var->Assign(output_var->ToDouble(FALSE) + ARG2_AS_DOUBLE);
+		if (!*ARG3 || !_tcschr(_T("SMHD"), ctoupper(*ARG3))) // ARG3 is absent or invalid, so do normal math (not date-time).
+		{
+			IF_EITHER_IS_FLOAT
+				return output_var->Assign(output_var->ToDouble(FALSE) + ARG2_AS_DOUBLE);
 			else // Non-numeric variables or values are considered to be zero for the purpose of the calculation.
 				return output_var->Assign(output_var->ToInt64(FALSE) + ARG2_AS_INT64);
-			}
+		}
 
 		// Since above didn't return, the command is being used to add a value to a date-time.
 		if (!value_is_pure_numeric) // It's considered to be zero, so the output_var is left unchanged:
@@ -14504,7 +13984,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		ul.HighPart = ft.dwHighDateTime;
 		// Add the specified amount of time to the result value:
 		ul.QuadPart += (__int64)nUnits;  // Seems ok to cast/truncate in light of the *=10000000 above.
-										 // Convert back into ft struct:
+		// Convert back into ft struct:
 		ft.dwLowDateTime = ul.LowPart;
 		ft.dwHighDateTime = ul.HighPart;
 		return output_var->Assign(FileTimeToYYYYMMDD(buf_temp, ft, false));
@@ -14513,10 +13993,10 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		if (!*ARG3 || !_tcschr(_T("SMHD"), ctoupper(*ARG3))) // ARG3 is absent or invalid, so do normal math (not date-time).
 		{
 			DETERMINE_NUMERIC_TYPES
-				IF_EITHER_IS_FLOAT
+			IF_EITHER_IS_FLOAT
 				return output_var->Assign(output_var->ToDouble(FALSE) - ARG2_AS_DOUBLE);
-		else // Non-numeric variables or values are considered to be zero for the purpose of the calculation.
-			return output_var->Assign(output_var->ToInt64(FALSE) - ARG2_AS_INT64);
+			else // Non-numeric variables or values are considered to be zero for the purpose of the calculation.
+				return output_var->Assign(output_var->ToInt64(FALSE) - ARG2_AS_INT64);
 		}
 
 		// Since above didn't return, the command is being used to subtract date-time values.
@@ -14524,13 +14004,13 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// If either ARG2 or output_var->Contents() is blank, it will default to the current time:
 		__int64 time_until; // Declaring separate from initializing avoids compiler warning when not inside a block.
 		DEFINE_ARG_VAR2
-			time_until = YYYYMMDDSecondsUntil(arg_var2 ? arg_var2->Contents() : ARG2
-				, output_var->Contents(), failed);
+		time_until = YYYYMMDDSecondsUntil(arg_var2 ? arg_var2->Contents() : ARG2
+			, output_var->Contents(), failed);
 		if (failed) // Usually caused by an invalid component in the date-time string.
 			return output_var->Assign(_T(""));
 		switch (ctoupper(*ARG3))
 		{
-			// Do nothing in the case of 'S' (seconds).  Otherwise:
+		// Do nothing in the case of 'S' (seconds).  Otherwise:
 		case 'M': time_until /= 60; break; // Minutes
 		case 'H': time_until /= 60 * 60; break; // Hours
 		case 'D': time_until /= 60 * 60 * 24; break; // Days
@@ -14543,19 +14023,19 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 
 	case ACT_MULT:
 		DETERMINE_NUMERIC_TYPES
-			IF_EITHER_IS_FLOAT
+		IF_EITHER_IS_FLOAT
 			return output_var->Assign(output_var->ToDouble(FALSE) * ARG2_AS_DOUBLE);
 		else // Non-numeric variables or values are considered to be zero for the purpose of the calculation.
 			return output_var->Assign(output_var->ToInt64(FALSE) * ARG2_AS_INT64);
 
 	case ACT_DIV:
 		DETERMINE_NUMERIC_TYPES
-			IF_EITHER_IS_FLOAT
+		IF_EITHER_IS_FLOAT
 		{
 			double ARG2_as_float = ARG2_AS_DOUBLE;
-		if (!ARG2_as_float)              // v1.0.46: Make behavior more consistent with expressions by
-			return output_var->Assign(); // avoiding a runtime error dialog; just make the output variable blank.
-		return output_var->Assign(output_var->ToDouble(FALSE) / ARG2_as_float);
+			if (!ARG2_as_float)              // v1.0.46: Make behavior more consistent with expressions by
+				return output_var->Assign(); // avoiding a runtime error dialog; just make the output variable blank.
+			return output_var->Assign(output_var->ToDouble(FALSE) / ARG2_as_float);
 		}
 		else // Non-numeric variables or values are considered to be zero for the purpose of the calculation.
 		{
@@ -14575,7 +14055,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		else
 		{
 			source_length = ArgLength(2); // Should be quick because Arg2 is an InputVar (except when it's a built-in var perhaps).
-			if (chars_to_extract >(int)source_length)
+			if (chars_to_extract > (int)source_length)
 				chars_to_extract = (int)source_length; // Assign() requires a length that's <= the actual length of the string.
 		}
 		// It will display any error that occurs.
@@ -14664,7 +14144,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			if (output_var->AssignString(NULL, ArgLength(2)) != OK) // The length is in characters, so AssignString(NULL, ...)
 				return FAIL;
 			contents = output_var->Contents(); // Do this only after the above might have changed the contents mem address.
-											   // Copy the input variable's text directly into the output variable:
+			// Copy the input variable's text directly into the output variable:
 			_tcscpy(contents, ARG2);
 		}
 		//else input and output are the same, normal variable; so nothing needs to be copied over.  Just leave
@@ -14697,9 +14177,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		{
 			if (!*ARG3) // It might be intentional, in obscure cases, to search for the empty string.
 				pos = 0;
-			// Above: empty string is always found immediately (first char from left) regardless
-			// of whether the search will be conducted from the right.  This is because it's too
-			// rare to worry about giving it any more explicit handling based on search direction.
+				// Above: empty string is always found immediately (first char from left) regardless
+				// of whether the search will be conducted from the right.  This is because it's too
+				// rare to worry about giving it any more explicit handling based on search direction.
 			else
 			{
 				LPTSTR found, haystack = ARG2, needle = ARG3;
@@ -14819,7 +14299,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		int wait_time = is_ahk_group ? 0 : DEFAULT_WINCLOSE_WAIT;
 		if (mActionType == ACT_WINCLOSE || mActionType == ACT_WINKILL) // ARG3 is contains the wait time.
 		{
-			if (*ARG3 && !(wait_time = (int)(1000 * ArgToDouble(3))))
+			if (*ARG3 && !(wait_time = (int)(1000 * ArgToDouble(3)))   )
 				wait_time = 500; // Legacy (prior to supporting floating point): 0 is defined as 500ms, which seems more useful than a true zero.
 			if (*ARG5)
 				is_ahk_group = false;  // Override the default.
@@ -14827,12 +14307,12 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		else
 			if (*ARG3)
 				is_ahk_group = false;  // Override the default.
-									   // Act upon all members of this group (WinText/ExcludeTitle/ExcludeText are ignored in this mode).
+		// Act upon all members of this group (WinText/ExcludeTitle/ExcludeText are ignored in this mode).
 		if (is_ahk_group && (group = g_script.FindGroup(omit_leading_whitespace(ARG1 + 9)))) // Assign.
 			return group->ActUponAll(mActionType, wait_time); // It will do DoWinDelay if appropriate.
-															  //else try to act upon it as though "ahk_group something" is a literal window title.
-
-															  // Since above didn't return, it's not "ahk_group", so do the normal single-window behavior.
+		//else try to act upon it as though "ahk_group something" is a literal window title.
+	
+		// Since above didn't return, it's not "ahk_group", so do the normal single-window behavior.
 		if (mActionType == ACT_WINCLOSE || mActionType == ACT_WINKILL)
 		{
 			if (WinClose(g, ARG1, ARG2, wait_time, ARG4, ARG5, mActionType == ACT_WINKILL)) // It closed something.
@@ -14860,9 +14340,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// script var, the script var's value (if non-blank) will be fetched instead.
 		// Note: It seems, at least under WinXP, that env variable names can contain spaces.  So it's best
 		// not to validate ARG1 the same way we validate script variables (i.e. just let\
-				// SetEnvironmentVariable()'s return value determine whether there's an error).  However, I just
-// realized that it's impossible to "retrieve" the value of an env var that has spaces (until now,
-// since the EnvGet command is available).
+		// SetEnvironmentVariable()'s return value determine whether there's an error).  However, I just
+		// realized that it's impossible to "retrieve" the value of an env var that has spaces (until now,
+		// since the EnvGet command is available).
 		return SetErrorLevelOrThrowBool(!SetEnvironmentVariable(ARG1, ARG2));
 
 	case ACT_ENVUPDATE:
@@ -14872,7 +14352,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// vs. SMTO_NORMAL.  Since I'm not sure why, I'm leaving it that way for now:
 		ULONG_PTR nResult;
 		return SetErrorLevelOrThrowBool(!SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE,
-			0, (LPARAM)_T("Environment"), SMTO_BLOCK, 15000, &nResult));
+										0, (LPARAM)_T("Environment"), SMTO_BLOCK, 15000, &nResult));
 	}
 
 	case ACT_URLDOWNLOADTOFILE:
@@ -14918,7 +14398,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		return ControlSend(SIX_ARGS, mActionType == ACT_CONTROLSENDRAW);
 
 	case ACT_CONTROLCLICK:
-		if (!(vk = ConvertMouseButton(ARG4))) // Treats blank as "Left".
+		if (   !(vk = ConvertMouseButton(ARG4))   ) // Treats blank as "Left".
 			return LineError(ERR_PARAM4_INVALID, FAIL, ARG4);
 		return ControlClick(vk, *ARG5 ? ArgToInt(5) : 1, ARG6, ARG1, ARG2, ARG3, ARG7, ARG8);
 
@@ -14978,72 +14458,39 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 	{
 		Label *target_label;
 		// If it wasn't resolved at load-time, it must be a variable reference:
-		if (!(target_label = (Label *)mAttribute))
-			if (*ARG1 && !(target_label = g_script.FindLabel(ARG1)))
-				return LineError(ERR_NO_LABEL, FAIL, ARG1);
+		if (   !(target_label = (Label *)mAttribute)   )
+			if (   *ARG1 && !(target_label = g_script.FindLabel(ARG1))   )
+					return LineError(ERR_NO_LABEL, FAIL, ARG1);
 		g_script.mOnExitLabel = target_label;
 		return OK;
 	}
 
 	case ACT_HOTKEY:
+	{
+		IObject *target_label;
 		// mAttribute is the label resolved at loadtime, if available (for performance).
-		return Hotkey::Dynamic(THREE_ARGS, (IObject *)mAttribute, ARGVAR2);
+		if (   !(target_label = (IObject *)mAttribute)   ) // Since it wasn't resolved at load-time, it must be a variable reference.
+			if (ARGVAR2 && ARGVAR2->HasObject()) // Allow: Hotkey %KeyName%, %VarWithObject%
+				target_label = ARGVAR2->Object(); // AddRef() will be called later, when it is stored.
+		return Hotkey::Dynamic(THREE_ARGS, target_label);
+	}
 
 	case ACT_SETTIMER: // A timer is being created, changed, or enabled/disabled.
 	{
 		IObject *target_label;
 		// Note that only one timer per label is allowed because the label is the unique identifier
 		// that allows us to figure out whether to "update or create" when searching the list of timers.
-		if (!(target_label = (IObject *)mAttribute)) // Since it wasn't resolved at load-time, it must be a variable reference.
-		{
-			if (!(target_label = g_script.FindCallable(ARG1, ARGVAR1)))
-			{
-				if (*ARG1)
-					// ARG1 is a non-empty string and not the name of an existing label or function.
-					return LineError(ERR_NO_LABEL, FAIL, ARG1);
-				// Possible cases not ruled out by the above check:
-				//   1) Label was omitted.
-				//   2) Label was a single variable or non-expression which produced an empty value.
-				//   3) Label was a single variable containing an incompatible function.
-				//   4) Label was an expression which produced an empty value.
-				//   5) Label was an expression which produced an object.
-				// Case 3 is always an error.
-				// Case 2 is arguably more likely to be an error (not intended to be empty) than meant as
-				// an indicator to use the current label, so it seems safest to treat it as an error (and
-				// also more consistent with Case 3).
-				// Case 5 is currently not supported; the object reference was converted to an empty string
-				// at an earlier stage, so it is indistinguishable from Case 4.  It seems rare that someone
-				// would have a legitimate need for Case 4, so both cases are treated as an error.  This
-				// covers cases like:
-				//   SetTimer, % Func(a).Bind(b), xxx  ; Unsupported.
-				//   SetTimer, % this.myTimerFunc, xxx  ; Unsupported (where myTimerFunc is an object).
-				//   SetTimer, % this.MyMethod, xxx  ; Additional error: failing to bind "this" to MyMethod.
-				// The following could be used to show "must not be blank" for Case 2, but it seems best
-				// to reserve that message for when the parameter is really blank, not an empty variable:
-				//if (mArgc > 0 && (mArg[0].is_expression /* Cases 4 & 5 */ || ARGVAR1 && ARGVAR1->HasObject() /* Case 3 */))
-				if (*RAW_ARG1)
-					return LineError(ERR_PARAM1_INVALID);
-				if (g.CurrentLabel)
-					// For backward-compatibility, use A_ThisLabel if set.  This can differ from CurrentTimer
-					// when goto/gosub is used.  Some scripts apparently use this with subroutines that are
-					// called both directly and by a timer.  The down side is that if a timer function uses
-					// goto/gosub, A_ThisLabel must take predence; that may or may not be the user's intention.
-					target_label = g.CurrentLabel;
-				else if (g.CurrentTimer)
-					// Default to the timer which launched the current thread.
-					target_label = g.CurrentTimer->mLabel.ToObject();
-				if (!target_label)
-					// Either the thread was not launched by a timer or the timer has been deleted.
-					return LineError(ERR_PARAM1_MUST_NOT_BE_BLANK);
-			}
-		}
+		if (   !(target_label = (IObject *)mAttribute)   ) // Since it wasn't resolved at load-time, it must be a variable reference.
+			if (   !(target_label = g_script.FindCallable(ARG1, ARGVAR1))
+				&& !(!*ARG1 && (target_label = g.CurrentLabel))   )
+				return LineError(ERR_NO_LABEL, FAIL, ARG1);
 		// And don't update mAttribute (leave it NULL) because we want ARG1 to be dynamically resolved
 		// every time the command is executed (in case the contents of the referenced variable change).
 		// In the data structure that holds the timers, we store the target label rather than the target
-		// line so that a label can be registered independently as a timer even if there is another label
+		// line so that a label can be registered independently as a timers even if there another label
 		// that points to the same line such as in this example:
-		// Label1:
-		// Label2:
+		// Label1::
+		// Label2::
 		// ...
 		// return
 		if (*ARG2)
@@ -15064,12 +14511,12 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// Below relies on distinguishing a true empty string from one that is sent to the function
 		// as empty as a signal.  Don't change it without a full understanding because it's likely
 		// to break compatibility or something else:
-		switch (toggle)
+		switch(toggle)
 		{
-		case TOGGLED_ON:
+		case TOGGLED_ON:  
 		case TOGGLED_OFF: g_script.UpdateOrCreateTimer(target_label, _T(""), ARG3, toggle == TOGGLED_ON, false); break;
-			// Timer is always (re)enabled when ARG2 specifies a numeric period or is blank + there's no ARG3.
-			// If ARG2 is blank but ARG3 (priority) isn't, tell it to update only the priority and nothing else:
+		// Timer is always (re)enabled when ARG2 specifies a numeric period or is blank + there's no ARG3.
+		// If ARG2 is blank but ARG3 (priority) isn't, tell it to update only the priority and nothing else:
 		default: g_script.UpdateOrCreateTimer(target_label, ARG2, ARG3, true, !*ARG2 && *ARG3);
 		}
 		return OK;
@@ -15091,13 +14538,13 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// a bigger tickcount granularity.
 		// Some hardware has a tickcount granularity of 15 instead of 10, so this covers more variations.
 		DWORD peek_frequency_when_critical_is_on = 16; // Set default.  See below.
-													   // v1.0.48: Below supports "Critical 0" as meaning "Off" to improve compatibility with A_IsCritical.
-													   // In fact, for performance, only the following are no recognized as turning on Critical:
-													   //     - "On"
-													   //     - ""
-													   //     - Integer other than 0.
-													   // Everything else, if considered to be "Off", including "Off", "Any non-blank string that
-													   // doesn't start with a non-zero number", and zero itself.
+		// v1.0.48: Below supports "Critical 0" as meaning "Off" to improve compatibility with A_IsCritical.
+		// In fact, for performance, only the following are no recognized as turning on Critical:
+		//     - "On"
+		//     - ""
+		//     - Integer other than 0.
+		// Everything else, if considered to be "Off", including "Off", "Any non-blank string that
+		// doesn't start with a non-zero number", and zero itself.
 		g.ThreadIsCritical = !*ARG1 // i.e. a first arg that's omitted or blank is the same as "ON". See comments above.
 			|| !_tcsicmp(ARG1, _T("ON"))
 			|| (peek_frequency_when_critical_is_on = ArgToUInt(1)); // Non-zero integer also turns it on. Relies on short-circuit boolean order.
@@ -15136,21 +14583,21 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		case THREAD_CMD_NOTIMERS:
 			g.AllowTimers = (*ARG2 && ArgToInt64(2) == 0);
 			break;
-			// If invalid command, do nothing since that is always caught at load-time unless the command
-			// is in a variable reference (very rare in this case).
+		// If invalid command, do nothing since that is always caught at load-time unless the command
+		// is in a variable reference (very rare in this case).
 		}
 		return OK;
 
 	case ACT_GROUPADD: // Adding a WindowSpec *to* a group, not adding a group.
 	{
-		if (!(group = (WinGroup *)mAttribute))
-			if (!(group = g_script.FindGroup(ARG1, true)))  // Last parameter -> create-if-not-found.
+		if (   !(group = (WinGroup *)mAttribute)   )
+			if (   !(group = g_script.FindGroup(ARG1, true))   )  // Last parameter -> create-if-not-found.
 				return FAIL;  // It already displayed the error for us.
 		Label *target_label = NULL;
 		if (*ARG4)
 		{
-			if (!(target_label = (Label *)mRelatedLine)) // Jump target hasn't been resolved yet, probably due to it being a deref.
-				if (!(target_label = g_script.FindLabel(ARG4)))
+			if (   !(target_label = (Label *)mRelatedLine)   ) // Jump target hasn't been resolved yet, probably due to it being a deref.
+				if (   !(target_label = g_script.FindLabel(ARG4))   )
 					return LineError(ERR_NO_LABEL, FAIL, ARG4);
 			// Can't do this because the current line won't be the launching point for the
 			// Gosub.  Instead, the launching point will be the GroupActivate rather than the
@@ -15164,22 +14611,22 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 
 	// Note ACT_GROUPACTIVATE is handled by ExecUntil(), since it's better suited to do the Gosub.
 	case ACT_GROUPDEACTIVATE:
-		if (!(group = (WinGroup *)mAttribute))
+		if (   !(group = (WinGroup *)mAttribute)   )
 			group = g_script.FindGroup(ARG1);
 		if (group)
 			group->Deactivate(*ARG2 && !_tcsicmp(ARG2, _T("R")));  // Note: It will take care of DoWinDelay if needed.
-																   //else nonexistent group: By design, do nothing.
+		//else nonexistent group: By design, do nothing.
 		return OK;
 
 	case ACT_GROUPCLOSE:
-		if (!(group = (WinGroup *)mAttribute))
+		if (   !(group = (WinGroup *)mAttribute)   )
 			group = g_script.FindGroup(ARG1);
 		if (group)
 			if (*ARG2 && !_tcsicmp(ARG2, _T("A")))
 				group->ActUponAll(ACT_WINCLOSE, 0);  // Note: It will take care of DoWinDelay if needed.
 			else
 				group->CloseAndGoToNext(*ARG2 && !_tcsicmp(ARG2, _T("R")));  // Note: It will take care of DoWinDelay if needed.
-																			 //else nonexistent group: By design, do nothing.
+		//else nonexistent group: By design, do nothing.
 		return OK;
 
 	case ACT_GETKEYSTATE:
@@ -15225,8 +14672,8 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			// something skewed that might result due to rounding/truncation issues caused by
 			// the float method used above:
 			// AutoIt3: __int64 is needed here to do the proper conversion from unsigned long to signed long:
-			return output_var->Assign((int)(__int64(genrand_int32()
-				% ((__int64)rand_max - rand_min + 1)) + rand_min));
+			return output_var->Assign(   (int)(__int64(genrand_int32()
+				% ((__int64)rand_max - rand_min + 1)) + rand_min)   );
 		}
 	}
 
@@ -15274,7 +14721,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		return FileReadLine(ARG2, ARG3);
 
 	case ACT_FILEDELETE:
-		return FileDelete(ARG1);
+		return FileDelete();
 
 	case ACT_FILERECYCLE:
 		return FileRecycle(ARG1);
@@ -15316,7 +14763,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 
 	case ACT_FILEGETATTRIB:
 		// The specified ARG, if non-blank, takes precedence over the file-loop's file (if any):
-#define USE_FILE_LOOP_FILE_IF_ARG_BLANK(arg) (*arg ? arg : (g.mLoopFile ? g.mLoopFile->cFileName : _T("")))
+		#define USE_FILE_LOOP_FILE_IF_ARG_BLANK(arg) (*arg ? arg : (g.mLoopFile ? g.mLoopFile->cFileName : _T("")))
 		return FileGetAttrib(USE_FILE_LOOP_FILE_IF_ARG_BLANK(ARG2));
 	case ACT_FILESETATTRIB:
 		FileSetAttrib(ARG1, USE_FILE_LOOP_FILE_IF_ARG_BLANK(ARG2), ConvertLoopMode(ARG3), ArgToInt(4) == 1);
@@ -15365,7 +14812,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 				g_KeyHistoryToFile = false;
 				KeyHistoryToFile();  // Signal it to close the file, if it's open.
 				break;
-				// We know it's a variable because otherwise the loading validation would have caught it earlier:
+			// We know it's a variable because otherwise the loading validation would have caught it earlier:
 			case TOGGLE_INVALID:
 				return LineError(ERR_PARAM1_INVALID, FAIL, ARG1);
 			}
@@ -15377,9 +14824,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// Otherwise:
 		return ShowMainWindow(MAIN_MODE_KEYHISTORY, false); // Pass "unrestricted" when the command is explicitly used in the script.
 	case ACT_LISTLINES:
-		if ((toggle = ConvertOnOff(ARG1, NEUTRAL)) == NEUTRAL)
+		if (   (toggle = ConvertOnOff(ARG1, NEUTRAL)) == NEUTRAL   )
 			return ShowMainWindow(MAIN_MODE_LINES, false); // Pass "unrestricted" when the command is explicitly used in the script.
-														   // Otherwise:
+		// Otherwise:
 		if (g.ListLinesIsEnabled)
 		{
 			// Since ExecUntil() just logged this ListLines On/Off in the line history, remove it to avoid
@@ -15404,34 +14851,34 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 	{
 		int result;
 		HWND dialog_owner = THREAD_DIALOG_OWNER; // Resolve macro only once to reduce code size.
-												 // If the MsgBox window can't be displayed for any reason, always return FAIL to
-												 // the caller because it would be unsafe to proceed with the execution of the
-												 // current script subroutine.  For example, if the script contains an IfMsgBox after,
-												 // this line, it's result would be unpredictable and might cause the subroutine to perform
-												 // the opposite action from what was intended (e.g. Delete vs. don't delete a file).
+		// If the MsgBox window can't be displayed for any reason, always return FAIL to
+		// the caller because it would be unsafe to proceed with the execution of the
+		// current script subroutine.  For example, if the script contains an IfMsgBox after,
+		// this line, it's result would be unpredictable and might cause the subroutine to perform
+		// the opposite action from what was intended (e.g. Delete vs. don't delete a file).
 		if (!mArgc) // When called explicitly with zero params, it displays this default msg.
 			result = MsgBox(_T("Press OK to continue."), MSGBOX_NORMAL, NULL, 0, dialog_owner);
 		else if (mArgc == 1) // In the special 1-parameter mode, the first param is the prompt.
 			result = MsgBox(ARG1, MSGBOX_NORMAL, NULL, 0, dialog_owner);
 		else
 			result = MsgBox(ARG3, ArgToInt(1), ARG2, ArgToDouble(4), dialog_owner); // dialog_owner passed via parameter to avoid internally-displayed MsgBoxes from being affected by script-thread's owner setting.
-																					// Above allows backward compatibility with AutoIt2's param ordering while still
-																					// permitting the new method of allowing only a single param.
-																					// v1.0.40.01: Rather than displaying another MsgBox in response to a failed attempt to display
-																					// a MsgBox, it seems better (less likely to cause trouble) just to abort the thread.  This also
-																					// solves a double-msgbox issue when the maximum number of MsgBoxes is reached.  In addition, the
-																					// max-msgbox limit is the most common reason for failure, in which case a warning dialog has
-																					// already been displayed, so there is no need to display another:
-																					//if (!result)
-																					//	// It will fail if the text is too large (say, over 150K or so on XP), but that
-																					//	// has since been fixed by limiting how much it tries to display.
-																					//	// If there were too many message boxes displayed, it will already have notified
-																					//	// the user of this via a final MessageBox dialog, so our call here will
-																					//	// not have any effect.  The below only takes effect if MsgBox()'s call to
-																					//	// MessageBox() failed in some unexpected way:
-																					//	LineError("The MsgBox could not be displayed.");
-																					// v1.1.09.02: If the MsgBox failed due to invalid options, it seems better to display
-																					// an error dialog than to silently exit the thread:
+		// Above allows backward compatibility with AutoIt2's param ordering while still
+		// permitting the new method of allowing only a single param.
+		// v1.0.40.01: Rather than displaying another MsgBox in response to a failed attempt to display
+		// a MsgBox, it seems better (less likely to cause trouble) just to abort the thread.  This also
+		// solves a double-msgbox issue when the maximum number of MsgBoxes is reached.  In addition, the
+		// max-msgbox limit is the most common reason for failure, in which case a warning dialog has
+		// already been displayed, so there is no need to display another:
+		//if (!result)
+		//	// It will fail if the text is too large (say, over 150K or so on XP), but that
+		//	// has since been fixed by limiting how much it tries to display.
+		//	// If there were too many message boxes displayed, it will already have notified
+		//	// the user of this via a final MessageBox dialog, so our call here will
+		//	// not have any effect.  The below only takes effect if MsgBox()'s call to
+		//	// MessageBox() failed in some unexpected way:
+		//	LineError("The MsgBox could not be displayed.");
+		// v1.1.09.02: If the MsgBox failed due to invalid options, it seems better to display
+		// an error dialog than to silently exit the thread:
 		if (!result && GetLastError() == ERROR_INVALID_MSGBOX_STYLE)
 			return LineError(ERR_PARAM1_INVALID, FAIL, ARG1);
 		return result ? OK : FAIL;
@@ -15443,16 +14890,16 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			, *ARG6 ? ArgToInt(6) : INPUTBOX_DEFAULT  // Height
 			, *ARG7 ? ArgToInt(7) : INPUTBOX_DEFAULT  // Xpos
 			, *ARG8 ? ArgToInt(8) : INPUTBOX_DEFAULT  // Ypos
-													  // ARG9: future use for Font name & size, e.g. "Courier:8"
+			// ARG9: future use for Font name & size, e.g. "Courier:8"
 			, ArgToDouble(10)  // Timeout
 			, ARG11  // Initial default string for the edit field.
-		);
+			);
 
 	case ACT_SPLASHTEXTON:
 		return SplashTextOn(*ARG1 ? ArgToInt(1) : 200, *ARG2 ? ArgToInt(2) : 0, ARG3, ARG4);
 	case ACT_SPLASHTEXTOFF:
 		DESTROY_SPLASH
-			return OK;
+		return OK;
 
 	case ACT_PROGRESS:
 		return Splash(FIVE_ARGS, _T(""), false);  // ARG6 is for future use and currently not passed.
@@ -15470,7 +14917,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		return Input();
 
 
-		//////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////
 
 	case ACT_COORDMODE:
 	{
@@ -15543,9 +14990,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		else
 		{
 			g.IntervalBeforeRest = -1;  // Disable the new method in favor of the old one below:
-										// This value is signed 64-bits to support variable reference (i.e. containing a large int)
-										// the user might throw at it:
-			if (!(g.LinesPerCycle = ArgToInt64(1)))
+			// This value is signed 64-bits to support variable reference (i.e. containing a large int)
+			// the user might throw at it:
+			if (   !(g.LinesPerCycle = ArgToInt64(1))   )
 				// Don't interpret zero as "infinite" because zero can accidentally
 				// occur if the dereferenced var was blank:
 				g.LinesPerCycle = 10;  // The old default, which is retained for compatibility with existing scripts.
@@ -15553,7 +15000,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		return OK;
 
 	case ACT_SETSTORECAPSLOCKMODE:
-		if ((toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL)
+		if (   (toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL   )
 			g.StoreCapslockMode = (toggle == TOGGLED_ON);
 		return OK;
 
@@ -15577,20 +15024,20 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			// -2 to allow room for the letter 'f' and the '%' that will be added:
 			if (ArgLength(2) >= _countof(g.FormatFloat) - 2) // A variable that resolved to something too long.
 				return OK; // Seems best not to bother with a runtime error for something so rare.
-						   // Make sure the formatted string wouldn't exceed the buffer size:
+			// Make sure the formatted string wouldn't exceed the buffer size:
 			__int64 width = ArgToInt64(2);
 			LPTSTR dot_pos = _tcschr(ARG2, '.');
 			__int64 precision = dot_pos ? ATOI64(dot_pos + 1) : 0;
 			if (width + precision + 2 > MAX_NUMBER_LENGTH) // +2 to allow room for decimal point itself and leading minus sign.
 				return OK; // Don't change it.
-						   // Create as "%ARG2f".  Note that %f can handle doubles in MSVC++:
+			// Create as "%ARG2f".  Note that %f can handle doubles in MSVC++:
 			_stprintf(g.FormatFloat, _T("%%%s%s%s"), ARG2
 				, dot_pos ? _T("") : _T(".") // Add a dot if none was specified so that "0" is the same as "0.", which seems like the most user-friendly approach; it's also easier to document in the help file.
 				, IsPureNumeric(ARG2, true, true, true) ? _T("f") : _T("")); // If it's not pure numeric, assume the user already included the desired letter (e.g. SetFormat, Float, 0.6e).
 		}
 		else if (!_tcsnicmp(ARG1, _T("Integer"), 7)) // "nicmp" vs. "icmp" so that Integer and IntegerFast are treated the same (loadtime validation already took notice of the Fast flag).
 		{
-			switch (*ARG2)
+			switch(*ARG2)
 			{
 			case 'd':
 			case 'D':
@@ -15598,10 +15045,10 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 				break;
 			case 'h':
 			case 'H':
-				g.FormatInt = (char)*ARG2;
+				g.FormatInt = (char) *ARG2;
 				break;
-				// Otherwise, since the first letter isn't recognized, do nothing since 99% of the time such a
-				// probably would be caught at load-time.
+			// Otherwise, since the first letter isn't recognized, do nothing since 99% of the time such a
+			// probably would be caught at load-time.
 			}
 		}
 		// Otherwise, ignore invalid type at runtime since 99% of the time it would be caught at load-time:
@@ -15611,7 +15058,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		return FormatTime(ARG2, ARG3);
 
 	case ACT_MENU:
-		return g_script.PerformMenu(SIX_ARGS, ARGVAR4, ARGVAR5);
+		return g_script.PerformMenu(SIX_ARGS, ARGVAR4); // L17: Changed from FIVE_ARGS to access previously "reserved" arg (for use by Menu,,Icon).
 
 	case ACT_GUI:
 		return g_script.PerformGui(FOUR_ARGS);
@@ -15622,11 +15069,11 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 	case ACT_GUICONTROLGET:
 		return GuiControlGet(ARG2, ARG3, ARG4);
 
-		////////////////////////////////////////////////////////////////////////////////////////
-		// For these, it seems best not to report an error during runtime if there's
-		// an invalid value (e.g. something other than On/Off/Blank) in a param containing
-		// a dereferenced variable, since settings are global and affect all subroutines,
-		// not just the one that we would otherwise report failure for:
+	////////////////////////////////////////////////////////////////////////////////////////
+	// For these, it seems best not to report an error during runtime if there's
+	// an invalid value (e.g. something other than On/Off/Blank) in a param containing
+	// a dereferenced variable, since settings are global and affect all subroutines,
+	// not just the one that we would otherwise report failure for:
 	case ACT_SUSPEND:
 		switch (ConvertOnOffTogglePermit(ARG1))
 		{
@@ -15646,7 +15093,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			// In this case do nothing.  The user is just using this command as a flag to indicate that
 			// this subroutine should not be suspended.
 			break;
-			// We know it's a variable because otherwise the loading validation would have caught it earlier:
+		// We know it's a variable because otherwise the loading validation would have caught it earlier:
 		case TOGGLE_INVALID:
 			return LineError(ERR_PARAM1_INVALID, FAIL, ARG1);
 		}
@@ -15654,7 +15101,7 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 	case ACT_PAUSE:
 		return ChangePauseState(ConvertOnOffToggle(ARG1), (bool)ArgToInt(2));
 	case ACT_AUTOTRIM:
-		if ((toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL)
+		if (   (toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL   )
 			g.AutoTrim = (toggle == TOGGLED_ON);
 		return OK;
 	case ACT_STRINGCASESENSE:
@@ -15662,11 +15109,11 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			g.StringCaseSense = SCS_INSENSITIVE; // For simplicity, just fall back to default if value is invalid (normally its caught at load-time; only rarely here).
 		return OK;
 	case ACT_DETECTHIDDENWINDOWS:
-		if ((toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL)
+		if (   (toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL   )
 			g.DetectHiddenWindows = (toggle == TOGGLED_ON);
 		return OK;
 	case ACT_DETECTHIDDENTEXT:
-		if ((toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL)
+		if (   (toggle = ConvertOnOff(ARG1, NEUTRAL)) != NEUTRAL   )
 			g.DetectHiddenText = (toggle == TOGGLED_ON);
 		return OK;
 	case ACT_BLOCKINPUT:
@@ -15691,15 +15138,15 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		case TOGGLE_MOUSEMOVEOFF:
 			g_BlockMouseMove = false; // But the mouse hook is left installed because it might be needed by other things. This approach is similar to that used by the Input command.
 			break;
-			// default (NEUTRAL or TOGGLE_INVALID): do nothing.
+		// default (NEUTRAL or TOGGLE_INVALID): do nothing.
 		}
 		return OK;
 
-		////////////////////////////////////////////////////////////////////////////////////////
-		// For these, it seems best not to report an error during runtime if there's
-		// an invalid value (e.g. something other than On/Off/Blank) in a param containing
-		// a dereferenced variable, since settings are global and affect all subroutines,
-		// not just the one that we would otherwise report failure for:
+	////////////////////////////////////////////////////////////////////////////////////////
+	// For these, it seems best not to report an error during runtime if there's
+	// an invalid value (e.g. something other than On/Off/Blank) in a param containing
+	// a dereferenced variable, since settings are global and affect all subroutines,
+	// not just the one that we would otherwise report failure for:
 	case ACT_SETNUMLOCKSTATE:
 		return SetToggleState(VK_NUMLOCK, g_ForceNumLock, ARG1);
 	case ACT_SETCAPSLOCKSTATE:
@@ -15726,11 +15173,11 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		// MsgSleep() is so heavily called and checks the value of the first parameter frequently:
 		int sleep_time = ArgToInt(1); // Keep it signed vs. unsigned for backward compatibility (e.g. scripts that do Sleep -1).
 
-									  // Do a true sleep on Win9x because the MsgSleep() method is very inaccurate on Win9x
-									  // for some reason (a MsgSleep(1) causes a sleep between 10 and 55ms, for example).
-									  // But only do so for short sleeps, for which the user has a greater expectation of
-									  // accuracy.  UPDATE: Do not change the 25 below without also changing it in Critical's
-									  // documentation.
+		// Do a true sleep on Win9x because the MsgSleep() method is very inaccurate on Win9x
+		// for some reason (a MsgSleep(1) causes a sleep between 10 and 55ms, for example).
+		// But only do so for short sleeps, for which the user has a greater expectation of
+		// accuracy.  UPDATE: Do not change the 25 below without also changing it in Critical's
+		// documentation.
 		if (sleep_time < 25 && sleep_time > 0 && g_os.IsWin9x()) // Ordered for short-circuit performance. v1.0.38.05: Added "sleep_time > 0" so that Sleep -1/0 will work the same on Win9x as it does on other OSes.
 			Sleep(sleep_time);
 		else
@@ -15751,9 +15198,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 
 	case ACT_REGREAD:
 		if (mArgc < 2 && g.mLoopRegItem) // Uses the registry loop's current item.
-										 // If g.mLoopRegItem->name specifies a subkey rather than a value name, do this anyway
-										 // so that it will set ErrorLevel to ERROR and set the output variable to be blank.
-										 // Also, do not use RegCloseKey() on this, even if it's a remote key, since our caller handles that:
+			// If g.mLoopRegItem->name specifies a subkey rather than a value name, do this anyway
+			// so that it will set ErrorLevel to ERROR and set the output variable to be blank.
+			// Also, do not use RegCloseKey() on this, even if it's a remote key, since our caller handles that:
 			return RegRead(g.mLoopRegItem->root_key, g.mLoopRegItem->subkey, g.mLoopRegItem->name);
 		// Otherwise:
 		root_key = RegConvertKey(ARG2, REG_EITHER_SYNTAX, &subkey, &is_remote_registry);
@@ -15767,9 +15214,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		return result;
 	case ACT_REGWRITE:
 		if (mArgc < 2 && g.mLoopRegItem) // Uses the registry loop's current item.
-										 // If g.mLoopRegItem->name specifies a subkey rather than a value name, do this anyway
-										 // so that it will set ErrorLevel to ERROR.  An error will also be indicated if
-										 // g.mLoopRegItem->type is an unsupported type:
+			// If g.mLoopRegItem->name specifies a subkey rather than a value name, do this anyway
+			// so that it will set ErrorLevel to ERROR.  An error will also be indicated if
+			// g.mLoopRegItem->type is an unsupported type:
 			return RegWrite(g.mLoopRegItem->type, g.mLoopRegItem->root_key, g.mLoopRegItem->subkey, g.mLoopRegItem->name, ARG1);
 		// Otherwise:
 		root_key = RegConvertKey(ARG2, REG_EITHER_SYNTAX, &subkey, &is_remote_registry);
@@ -15790,21 +15237,11 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 			// will be deleted as the user intended:
 			if (g.mLoopRegItem->type == REG_SUBKEY)
 			{
-				if (*g.mLoopRegItem->subkey)
-				{
-					sntprintf(buf_temp, _countof(buf_temp), _T("%s\\%s"), g.mLoopRegItem->subkey, g.mLoopRegItem->name);
-					subkey = buf_temp;
-				}
-				else // It's a direct subkey of root_key.
-					subkey = g.mLoopRegItem->name;
-				value_name = NULL;
+				sntprintf(buf_temp, _countof(buf_temp), _T("%s\\%s"), g.mLoopRegItem->subkey, g.mLoopRegItem->name);
+				return RegDelete(g.mLoopRegItem->root_key, buf_temp, NULL);
 			}
 			else
-			{
-				subkey = g.mLoopRegItem->subkey;
-				value_name = g.mLoopRegItem->name;
-			}
-			return RegDelete(g.mLoopRegItem->root_key, subkey, value_name);
+				return RegDelete(g.mLoopRegItem->root_key, g.mLoopRegItem->subkey, g.mLoopRegItem->name);
 		}
 		// Otherwise:
 		root_key = RegConvertKey(ARG1, REG_EITHER_SYNTAX, &subkey, &is_remote_registry);
@@ -15857,9 +15294,9 @@ __forceinline ResultType Line::Perform() // As of 2/9/2009, __forceinline() redu
 		return OK;
 	} // switch()
 
-	  // Since above didn't return, this line's mActionType isn't handled here,
-	  // so caller called it wrong.  ACT_INVALID should be impossible because
-	  // Script::AddLine() forbids it.
+	// Since above didn't return, this line's mActionType isn't handled here,
+	// so caller called it wrong.  ACT_INVALID should be impossible because
+	// Script::AddLine() forbids it.
 
 #ifdef _DEBUG
 	return LineError(_T("DEBUG: Perform(): Unhandled action type."));
@@ -15875,9 +15312,9 @@ ResultType Line::Deref(Var *aOutputVar, LPTSTR aBuf)
 {
 	aOutputVar = aOutputVar->ResolveAlias(); // Necessary for proper detection below of whether it's invalidly used as a source for itself.
 
-											 // This transient variable is used resolving environment variables that don't already exist
-											 // in the script's variable list (due to the fact that they aren't directly referenced elsewhere
-											 // in the script):
+	// This transient variable is used resolving environment variables that don't already exist
+	// in the script's variable list (due to the fact that they aren't directly referenced elsewhere
+	// in the script):
 	TCHAR var_name[MAX_VAR_NAME_LENGTH + 1] = _T("");
 
 	Var *var;
@@ -15922,14 +15359,14 @@ ResultType Line::Deref(Var *aOutputVar, LPTSTR aBuf)
 					switch (*cp1) // See ConvertEscapeSequences() for more details.
 					{
 						// Only lowercase is recognized for these:
-					case 'a': *dest = '\a'; break;  // alert (bell) character
-					case 'b': *dest = '\b'; break;  // backspace
-					case 'f': *dest = '\f'; break;  // formfeed
-					case 'n': *dest = '\n'; break;  // newline
-					case 'r': *dest = '\r'; break;  // carriage return
-					case 't': *dest = '\t'; break;  // horizontal tab
-					case 'v': *dest = '\v'; break;  // vertical tab
-					default:  *dest = *cp1; // These other characters are resolved just as they are, including '\0'.
+						case 'a': *dest = '\a'; break;  // alert (bell) character
+						case 'b': *dest = '\b'; break;  // backspace
+						case 'f': *dest = '\f'; break;  // formfeed
+						case 'n': *dest = '\n'; break;  // newline
+						case 'r': *dest = '\r'; break;  // carriage return
+						case 't': *dest = '\t'; break;  // horizontal tab
+						case 'v': *dest = '\v'; break;  // vertical tab
+						default:  *dest = *cp1; // These other characters are resolved just as they are, including '\0'.
 					}
 					++dest;
 				}
@@ -15954,9 +15391,9 @@ ResultType Line::Deref(Var *aOutputVar, LPTSTR aBuf)
 			if (var_name_length && var_name_length <= MAX_VAR_NAME_LENGTH)
 			{
 				tcslcpy(var_name, cp + 1, var_name_length + 1);  // +1 to convert var_name_length to size.
-																 // Fixed for v1.0.34: Use FindOrAddVar() vs. FindVar() so that environment or built-in
-																 // variables that aren't directly referenced elsewhere in the script will still work:
-				if (!(var = g_script.FindOrAddVar(var_name, var_name_length)))
+				// Fixed for v1.0.34: Use FindOrAddVar() vs. FindVar() so that environment or built-in
+				// variables that aren't directly referenced elsewhere in the script will still work:
+				if (   !(var = g_script.FindOrAddVar(var_name, var_name_length))   )
 					return FAIL; // Above already displayed the error.
 				var = var->ResolveAlias();
 				// Don't allow the output variable to be read into itself this way because its contents
@@ -15982,10 +15419,10 @@ ResultType Line::Deref(Var *aOutputVar, LPTSTR aBuf)
 
 
 LPTSTR Line::LogToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an int to preserve negatives from caller (caller relies on this).
-												  // aBufSize is an int so that any negative values passed in from caller are not lost.
-												  // Translates sLog into its text equivalent, putting the result into aBuf and
-												  // returning the position in aBuf of its new string terminator.
-												  // Caller has ensured that aBuf is non-NULL and that aBufSize is reasonable (at least 256).
+// aBufSize is an int so that any negative values passed in from caller are not lost.
+// Translates sLog into its text equivalent, putting the result into aBuf and
+// returning the position in aBuf of its new string terminator.
+// Caller has ensured that aBuf is non-NULL and that aBufSize is reasonable (at least 256).
 {
 	LPTSTR aBuf_orig = aBuf;
 
@@ -15995,7 +15432,7 @@ LPTSTR Line::LogToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an int t
 		_T(" the right (if not 0).  The bottommost line's elapsed time is the number of seconds since it executed.\r\n\r\n"));
 
 	int i, lines_to_show, line_index, line_index2, space_remaining; // space_remaining must be an int to detect negatives.
-#ifndef AT
+#ifndef AUTOHOTKEYSC
 	int last_file_index = -1;
 #endif
 	DWORD elapsed;
@@ -16016,10 +15453,10 @@ LPTSTR Line::LogToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an int t
 			if (i + 1 < lines_to_show)  // There are still more lines to be processed
 			{
 				if (this_item_is_special) // And we know from the above that this special line is not the last line.
-										  // Due to the fact that these special lines are usually only useful when they appear at the
-										  // very end of the log, omit them from the log-display when they're not the last line.
-										  // In the case of a high-frequency SetTimer, this greatly reduces the log clutter that
-										  // would otherwise occur:
+					// Due to the fact that these special lines are usually only useful when they appear at the
+					// very end of the log, omit them from the log-display when they're not the last line.
+					// In the case of a high-frequency SetTimer, this greatly reduces the log clutter that
+					// would otherwise occur:
 					continue;
 
 				// Since above didn't continue, this item isn't special, so display it normally.
@@ -16047,7 +15484,7 @@ LPTSTR Line::LogToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an int t
 			}
 			else // This is the last line (whether special or not), so compare it's time against the current time instead.
 				elapsed = GetTickCount() - sLogTick[line_index];
-#ifndef AT
+#ifndef AUTOHOTKEYSC
 			// If the this line and the previous line are in different files, display the filename:
 			if (last_file_index != sLog[line_index]->mFileIndex)
 			{
@@ -16056,18 +15493,18 @@ LPTSTR Line::LogToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an int t
 			}
 #endif
 			space_remaining = BUF_SPACE_REMAINING;  // Resolve macro only once for performance.
-													// Truncate really huge lines so that the Edit control's size is less likely to be exhausted.
-													// In v1.0.30.02, this is even more likely due to having increased the line-buf's capacity from
-													// 200 to 400, therefore the truncation point was reduced from 500 to 200 to make it more likely
-													// that the first attempt to fit the lines_to_show number of lines into the buffer will succeed.
+			// Truncate really huge lines so that the Edit control's size is less likely to be exhausted.
+			// In v1.0.30.02, this is even more likely due to having increased the line-buf's capacity from
+			// 200 to 400, therefore the truncation point was reduced from 500 to 200 to make it more likely
+			// that the first attempt to fit the lines_to_show number of lines into the buffer will succeed.
 			aBuf = sLog[line_index]->ToText(aBuf, space_remaining < 200 ? space_remaining : 200, true, elapsed, this_item_is_special);
 			// If the line above can't fit everything it needs into the remaining space, it will fill all
 			// of the remaining space, and thus the check against LINE_LOG_FINAL_MESSAGE_LENGTH below
 			// should never fail to catch that, and then do a retry.
 		} // Inner for()
 
-#define LINE_LOG_FINAL_MESSAGE _T("\r\nPress [F5] to refresh.") // Keep the next line in sync with this.
-#define LINE_LOG_FINAL_MESSAGE_LENGTH 24
+		#define LINE_LOG_FINAL_MESSAGE _T("\r\nPress [F5] to refresh.") // Keep the next line in sync with this.
+		#define LINE_LOG_FINAL_MESSAGE_LENGTH 24
 		if (BUF_SPACE_REMAINING > LINE_LOG_FINAL_MESSAGE_LENGTH || lines_to_show < 120) // Either success or can't succeed.
 			break;
 
@@ -16078,22 +15515,22 @@ LPTSTR Line::LogToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an int t
 
 	} // outer for() that retries the log-to-buffer routine.
 
-	  // Must add the return value, not LINE_LOG_FINAL_MESSAGE_LENGTH, in case insufficient room (i.e. in case
-	  // outer loop terminated due to lines_to_show being too small).
+	// Must add the return value, not LINE_LOG_FINAL_MESSAGE_LENGTH, in case insufficient room (i.e. in case
+	// outer loop terminated due to lines_to_show being too small).
 	return aBuf + sntprintf(aBuf, BUF_SPACE_REMAINING, LINE_LOG_FINAL_MESSAGE);
 }
 
 
 
 LPTSTR Line::VicinityToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an int to preserve negatives from caller (caller relies on this).
-													   // aBufSize is an int so that any negative values passed in from caller are not lost.
-													   // Caller has ensured that aBuf isn't NULL.
-													   // Translates the current line and the lines above and below it into their text equivalent
-													   // putting the result into aBuf and returning the position in aBuf of its new string terminator.
+// aBufSize is an int so that any negative values passed in from caller are not lost.
+// Caller has ensured that aBuf isn't NULL.
+// Translates the current line and the lines above and below it into their text equivalent
+// putting the result into aBuf and returning the position in aBuf of its new string terminator.
 {
 	LPTSTR aBuf_orig = aBuf;
 
-#define LINES_ABOVE_AND_BELOW 7
+	#define LINES_ABOVE_AND_BELOW 7
 
 	// Determine the correct value for line_start and line_end:
 	int i;
@@ -16106,7 +15543,7 @@ LPTSTR Line::VicinityToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an 
 		; i < LINES_ABOVE_AND_BELOW && line_end->mNextLine != NULL
 		; ++i, line_end = line_end->mNextLine);
 
-#ifdef AT
+#ifdef AUTOHOTKEYSC
 	if (!g_AllowMainWindow) // Override the above to show only a single line, to conceal the script's source code.
 	{
 		line_start = this;
@@ -16120,7 +15557,7 @@ LPTSTR Line::VicinityToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an 
 
 	int space_remaining; // Must be an int to preserve any negative results.
 
-						 // Start at the oldest and continue up through the newest:
+	// Start at the oldest and continue up through the newest:
 	for (Line *line = line_start;;)
 	{
 		if (line == this)
@@ -16129,7 +15566,7 @@ LPTSTR Line::VicinityToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an 
 			tcslcpy(aBuf, _T("\t"), BUF_SPACE_REMAINING);
 		aBuf += _tcslen(aBuf);
 		space_remaining = BUF_SPACE_REMAINING;  // Resolve macro only once for performance.
-												// Truncate large lines so that the dialog is more readable:
+		// Truncate large lines so that the dialog is more readable:
 		aBuf = line->ToText(aBuf, space_remaining < 500 ? space_remaining : 500, false);
 		if (line == line_end)
 			break;
@@ -16141,10 +15578,10 @@ LPTSTR Line::VicinityToText(LPTSTR aBuf, int aBufSize) // aBufSize should be an 
 
 
 LPTSTR Line::ToText(LPTSTR aBuf, int aBufSize, bool aCRLF, DWORD aElapsed, bool aLineWasResumed) // aBufSize should be an int to preserve negatives from caller (caller relies on this).
-																								 // aBufSize is an int so that any negative values passed in from caller are not lost.
-																								 // Caller has ensured that aBuf isn't NULL.
-																								 // Translates this line into its text equivalent, putting the result into aBuf and
-																								 // returning the position in aBuf of its new string terminator.
+// aBufSize is an int so that any negative values passed in from caller are not lost.
+// Caller has ensured that aBuf isn't NULL.
+// Translates this line into its text equivalent, putting the result into aBuf and
+// returning the position in aBuf of its new string terminator.
 {
 	if (aBufSize < 3)
 		return aBuf;
@@ -16261,7 +15698,7 @@ ResultType Line::ChangePauseState(ToggleValueType aChangeTo, bool aAlwaysOperate
 		// pause state on and off -- even though what's really happening involves multiple threads.)
 		break;
 	default: // TOGGLE_INVALID or some other disallowed value.
-			 // We know it's a variable because otherwise the loading validation would have caught it earlier:
+		// We know it's a variable because otherwise the loading validation would have caught it earlier:
 		return LineError(ERR_PARAM1_INVALID, FAIL, ARG1);
 	}
 
@@ -16328,8 +15765,8 @@ Line *Line::PreparseError(LPTSTR aErrorText, LPTSTR aExtraInfo)
 IObject *Line::CreateRuntimeException(LPCTSTR aErrorText, LPCTSTR aWhat, LPCTSTR aExtraInfo)
 {
 	// Build the parameters for Object::Create()
-	ExprTokenType aParams[5 * 2]; int aParamCount = 4 * 2;
-	ExprTokenType* aParam[5 * 2] = { aParams + 0, aParams + 1, aParams + 2, aParams + 3, aParams + 4
+	ExprTokenType aParams[5*2]; int aParamCount = 4*2;
+	ExprTokenType* aParam[5*2] = { aParams + 0, aParams + 1, aParams + 2, aParams + 3, aParams + 4
 		, aParams + 5, aParams + 6, aParams + 7, aParams + 8, aParams + 9 };
 	aParams[0].symbol = SYM_STRING;  aParams[0].marker = _T("What");
 	aParams[1].symbol = SYM_STRING;  aParams[1].marker = aWhat ? (LPTSTR)aWhat : g_act[mActionType].Name;
@@ -16359,8 +15796,8 @@ ResultType Line::ThrowRuntimeException(LPCTSTR aErrorText, LPCTSTR aWhat, LPCTST
 		g_script.FreeExceptionToken(g->ThrownToken);
 
 	ExprTokenType *token;
-	if (!(token = new ExprTokenType)
-		|| !(token->object = CreateRuntimeException(aErrorText, aWhat, aExtraInfo)))
+	if (   !(token = new ExprTokenType)
+		|| !(token->object = CreateRuntimeException(aErrorText, aWhat, aExtraInfo))   )
 	{
 		// Out of memory. It's likely that we were called for this very reason.
 		// Since we don't even have enough memory to allocate an exception object,
@@ -16483,7 +15920,7 @@ ResultType Line::LineError(LPCTSTR aErrorText, ResultType aErrorType, LPCTSTR aE
 		// v1.0.47: Added a space before the colon as originally intended.  Toralf said, "With this minor
 		// change the error lexer of Scite recognizes this line as a Microsoft error message and it can be
 		// used to jump to that line."
-#define STD_ERROR_FORMAT _T("%s (%d) : ==> %s\n")
+		#define STD_ERROR_FORMAT _T("%s (%d) : ==> %s\n")
 		ERR_PRINT(STD_ERROR_FORMAT, sSourceFile[mFileIndex], mLineNumber, aErrorText); // printf() does not significantly increase the size of the EXE, probably because it shares most of the same code with sprintf(), etc.
 		if (*aExtraInfo)
 			ERR_PRINT(_T("     Specifically: %s\n"), aExtraInfo);
@@ -16499,14 +15936,14 @@ ResultType Line::LineError(LPCTSTR aErrorText, ResultType aErrorType, LPCTSTR aE
 			: _T("For more details, read the documentation for #Warn."));
 
 		g_script.mCurrLine = this;  // This needs to be set in some cases where the caller didn't.
-
+		
 #ifdef CONFIG_DEBUGGER
 		if (g_Debugger.HasStdErrHook())
 			g_Debugger.OutputDebug(buf);
 		else
 #endif
-			if (MsgBox(buf, MB_TOPMOST | (aErrorType == EARLY_EXIT ? MB_YESNO : 0)) == IDNO)
-				aErrorType = CRITICAL_ERROR;
+		if (MsgBox(buf, MB_TOPMOST | (aErrorType == EARLY_EXIT ? MB_YESNO : 0)) == IDNO)
+			aErrorType = CRITICAL_ERROR;
 	}
 
 	if (aErrorType == CRITICAL_ERROR && g_script.mIsReadyToExecute)
@@ -16553,15 +15990,15 @@ int Line::FormatError(LPTSTR aBuf, int aBufSize, ResultType aErrorType, LPCTSTR 
 	// What now?:
 	if (aFooter)
 		aBuf += sntprintf(aBuf, BUF_SPACE_REMAINING, _T("\n%s"), aFooter);
-
+	
 	return (int)(aBuf - aBuf_orig);
 }
 
 
 
 ResultType Script::ScriptError(LPCTSTR aErrorText, LPCTSTR aExtraInfo) //, ResultType aErrorType)
-																	   // Even though this is a Script method, including it here since it shares
-																	   // a common theme with the other error-displaying functions:
+// Even though this is a Script method, including it here since it shares
+// a common theme with the other error-displaying functions:
 {
 	if (mCurrLine)
 		// If a line is available, do LineError instead since it's more specific.
@@ -16620,7 +16057,7 @@ ResultType Script::ScriptError(LPCTSTR aErrorText, LPCTSTR aExtraInfo) //, Resul
 			g_Debugger.OutputDebug(buf);
 		else
 #endif
-			MsgBox(buf);
+		MsgBox(buf);
 	}
 	return FAIL; // See above for why it's better to return FAIL than CRITICAL_ERROR.
 }
@@ -16672,12 +16109,12 @@ ResultType Script::UnhandledException(ExprTokenType*& aToken, Line* aLine)
 	{
 		extra = message;
 		message = _T("Unhandled exception.");
-	}
+	}	
 
 	TCHAR buf[MSGBOX_TEXT_SIZE];
 	Line::FormatError(buf, _countof(buf), FAIL, message, extra, aLine, _T("The thread has exited."));
 	MsgBox(buf);
-
+	
 	FreeExceptionToken(aToken);
 
 	return FAIL;
@@ -16709,8 +16146,8 @@ void Script::ScriptWarning(WarnMode warnMode, LPCTSTR aWarningText, LPCTSTR aExt
 
 	TCHAR buf[MSGBOX_TEXT_SIZE], *cp = buf;
 	int buf_space_remaining = (int)_countof(buf);
-
-#define STD_WARNING_FORMAT _T("%s (%d) : ==> Warning: %s\n")
+	
+	#define STD_WARNING_FORMAT _T("%s (%d) : ==> Warning: %s\n")
 	cp += sntprintf(cp, buf_space_remaining, STD_WARNING_FORMAT, Line::sSourceFile[fileIndex], lineNumber, aWarningText);
 	buf_space_remaining = (int)(_countof(buf) - (cp - buf));
 
@@ -16797,7 +16234,7 @@ void Script::MaybeWarnLocalSameAsGlobal(Func &func, Var &var)
 	TCHAR buf[DIALOG_TITLE_SIZE], *cp = buf;
 	int buf_space_remaining = (int)_countof(buf);
 	sntprintf(cp, buf_space_remaining, _T("%s  (in function %s)"), var.mName, func.mName);
-
+	
 	ScriptWarning(g_Warn_LocalSameAsGlobal, WARNING_LOCAL_SAME_AS_GLOBAL, buf, line);
 }
 
@@ -16824,25 +16261,25 @@ void Script::PreprocessLocalVars(Func &aFunc, Var **aVarList, int &aVarCount)
 			--v; // Counter the loop's increment.
 		}
 		else
-			// Since this undeclared local variable has the same name as a global, there's
-			// a chance the user intended it to be global. So consider warning the user:
-			MaybeWarnLocalSameAsGlobal(aFunc, var);
+		// Since this undeclared local variable has the same name as a global, there's
+		// a chance the user intended it to be global. So consider warning the user:
+		MaybeWarnLocalSameAsGlobal(aFunc, var);
 	}
 }
 
 
 
 LPTSTR Script::ListVars(LPTSTR aBuf, int aBufSize) // aBufSize should be an int to preserve negatives from caller (caller relies on this).
-												   // aBufSize is an int so that any negative values passed in from caller are not lost.
-												   // Translates this script's list of variables into text equivalent, putting the result
-												   // into aBuf and returning the position in aBuf of its new string terminator.
+// aBufSize is an int so that any negative values passed in from caller are not lost.
+// Translates this script's list of variables into text equivalent, putting the result
+// into aBuf and returning the position in aBuf of its new string terminator.
 {
 	LPTSTR aBuf_orig = aBuf;
 	Func *current_func = g->CurrentFunc ? g->CurrentFunc : g->CurrentFuncGosub;
 	if (current_func)
 	{
 		// This definition might help compiler string pooling by ensuring it stays the same for both usages:
-#define LIST_VARS_UNDERLINE _T("\r\n--------------------------------------------------\r\n")
+		#define LIST_VARS_UNDERLINE _T("\r\n--------------------------------------------------\r\n")
 		// Start at the oldest and continue up through the newest:
 		aBuf += sntprintf(aBuf, BUF_SPACE_REMAINING, _T("Local Variables for %s()%s"), current_func->mName, LIST_VARS_UNDERLINE);
 		Func &func = *current_func; // For performance.
@@ -16866,18 +16303,18 @@ LPTSTR Script::ListVars(LPTSTR aBuf, int aBufSize) // aBufSize should be an int 
 
 
 LPTSTR Script::ListKeyHistory(LPTSTR aBuf, int aBufSize) // aBufSize should be an int to preserve negatives from caller (caller relies on this).
-														 // aBufSize is an int so that any negative values passed in from caller are not lost.
-														 // Translates this key history into text equivalent, putting the result
-														 // into aBuf and returning the position in aBuf of its new string terminator.
+// aBufSize is an int so that any negative values passed in from caller are not lost.
+// Translates this key history into text equivalent, putting the result
+// into aBuf and returning the position in aBuf of its new string terminator.
 {
 	LPTSTR aBuf_orig = aBuf; // Needed for the BUF_SPACE_REMAINING macro.
-							 // I was initially concerned that GetWindowText() can hang if the target window is
-							 // hung.  But at least on newer OS's, this doesn't seem to be a problem: MSDN says
-							 // "If the window does not have a caption, the return value is a null string. This
-							 // behavior is by design. It allows applications to call GetWindowText without hanging
-							 // if the process that owns the target window is hung. However, if the target window
-							 // is hung and it belongs to the calling application, GetWindowText will hang the
-							 // calling application."
+	// I was initially concerned that GetWindowText() can hang if the target window is
+	// hung.  But at least on newer OS's, this doesn't seem to be a problem: MSDN says
+	// "If the window does not have a caption, the return value is a null string. This
+	// behavior is by design. It allows applications to call GetWindowText without hanging
+	// if the process that owns the target window is hung. However, if the target window
+	// is hung and it belongs to the calling application, GetWindowText will hang the
+	// calling application."
 	HWND target_window = GetForegroundWindow();
 	TCHAR win_title[100];
 	if (target_window)
@@ -16885,8 +16322,7 @@ LPTSTR Script::ListKeyHistory(LPTSTR aBuf, int aBufSize) // aBufSize should be a
 	else
 		*win_title = '\0';
 
-	TCHAR timer_list[128];
-	*timer_list = '\0';
+	TCHAR timer_list[128] = _T("");
 	for (ScriptTimer *timer = mFirstTimer; timer != NULL; timer = timer->mNextTimer)
 		if (timer->mEnabled)
 			sntprintfcat(timer_list, _countof(timer_list) - 3, _T("%s "), timer->mLabel->Name()); // Allow room for "..."
@@ -16932,12 +16368,12 @@ LPTSTR Script::ListKeyHistory(LPTSTR aBuf, int aBufSize) // aBufSize should be a
 
 ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir, bool aDisplayErrors
 	, LPTSTR aRunShowMode, HANDLE *aProcess, bool aUpdateLastError, bool aUseRunAs, Var *aOutputVar)
-	// Caller should specify NULL for aParams if it wants us to attempt to parse out params from
-	// within aAction.  Caller may specify empty string ("") instead to specify no params at all.
-	// Remember that aAction and aParams can both be NULL, so don't dereference without checking first.
-	// Note: For the Run & RunWait commands, aParams should always be NULL.  Params are parsed out of
-	// the aActionString at runtime, here, rather than at load-time because Run & RunWait might contain
-	// dereferenced variable(s), which can only be resolved at runtime.
+// Caller should specify NULL for aParams if it wants us to attempt to parse out params from
+// within aAction.  Caller may specify empty string ("") instead to specify no params at all.
+// Remember that aAction and aParams can both be NULL, so don't dereference without checking first.
+// Note: For the Run & RunWait commands, aParams should always be NULL.  Params are parsed out of
+// the aActionString at runtime, here, rather than at load-time because Run & RunWait might contain
+// dereferenced variable(s), which can only be resolved at runtime.
 {
 	HANDLE hprocess_local;
 	HANDLE &hprocess = aProcess ? *aProcess : hprocess_local; // To simplify other things.
@@ -16952,7 +16388,7 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 	if (aWorkingDir && !*aWorkingDir)
 		aWorkingDir = NULL;
 
-#define IS_VERB(str) (   !_tcsicmp(str, _T("find")) || !_tcsicmp(str, _T("explore")) || !_tcsicmp(str, _T("open"))\
+	#define IS_VERB(str) (   !_tcsicmp(str, _T("find")) || !_tcsicmp(str, _T("explore")) || !_tcsicmp(str, _T("open"))\
 		|| !_tcsicmp(str, _T("edit")) || !_tcsicmp(str, _T("print")) || !_tcsicmp(str, _T("properties"))   )
 
 	// Set default items to be run by ShellExecute().  These are also used by the error
@@ -16961,7 +16397,7 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 	LPTSTR shell_verb = NULL;
 	LPTSTR shell_action = aAction;
 	LPTSTR shell_params = NULL;
-
+	
 	///////////////////////////////////////////////////////////////////////////////////
 	// This next section is done prior to CreateProcess() because when aParams is NULL,
 	// we need to find out whether aAction contains a system verb.
@@ -17016,11 +16452,11 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 			ScriptError(_T("System verbs unsupported with RunAs."));
 		return FAIL;
 	}
-
+	
 	size_t action_length = _tcslen(shell_action); // shell_action == aAction if shell_verb == NULL.
 	if (action_length >= LINE_SIZE) // Max length supported by CreateProcess() is 32 KB. But there hasn't been any demand to go above 16 KB, so seems little need to support it (plus it reduces risk of stack overflow).
 	{
-		if (aDisplayErrors)
+        if (aDisplayErrors)
 			ScriptError(_T("String too long.")); // Short msg since so rare.
 		return FAIL;
 	}
@@ -17033,14 +16469,14 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 	// the extension (e.g. .exe) to differentiate "find" from "find.exe":
 	if (!shell_verb)
 	{
-		STARTUPINFO si = { 0 }; // Zero fill to be safer.
+		STARTUPINFO si = {0}; // Zero fill to be safer.
 		si.cb = sizeof(si);
 		// The following are left at the default of NULL/0 set higher above:
 		//si.lpReserved = si.lpDesktop = si.lpTitle = NULL;
 		//si.lpReserved2 = NULL;
 		si.dwFlags = STARTF_USESHOWWINDOW;  // This tells it to use the value of wShowWindow below.
 		si.wShowWindow = (aRunShowMode && *aRunShowMode) ? Line::ConvertRunMode(aRunShowMode) : SW_SHOWNORMAL;
-		PROCESS_INFORMATION pi = { 0 };
+		PROCESS_INFORMATION pi = {0};
 
 		// Since CreateProcess() requires that the 2nd param be modifiable, ensure that it is
 		// (even if this is ANSI and not Unicode; it's just safer):
@@ -17053,7 +16489,7 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 		else // We're running the original action from caller.
 		{
 			command_line = talloca(action_length + 1);
-			_tcscpy(command_line, aAction); // CreateProcessW() requires modifiable string.  Although non-W version is used now, it feels safer to make it modifiable anyway.
+        	_tcscpy(command_line, aAction); // CreateProcessW() requires modifiable string.  Although non-W version is used now, it feels safer to make it modifiable anyway.
 		}
 
 		if (use_runas)
@@ -17099,7 +16535,7 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 	// This policy encourages users to have RunAs in effect only when necessary:
 	if (!success && !use_runas) // Either the above wasn't attempted, or the attempt failed.  So try ShellExecute().
 	{
-		SHELLEXECUTEINFO sei = { 0 };
+		SHELLEXECUTEINFO sei = {0};
 		// sei.hwnd is left NULL to avoid potential side-effects with having a hidden window be the parent.
 		// However, doing so may result in the launched app appearing on a different monitor than the
 		// script's main window appears on (for multimonitor systems).  This seems fairly inconsequential
@@ -17117,21 +16553,21 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 		}
 		if (!shell_params) // i.e. above hasn't determined the params yet.
 		{
-			// Rather than just consider the first phrase to be the executable and the rest to be the param, we check it
-			// for a proper extension so that the user can launch a document name containing spaces, without having to
-			// enclose it in double quotes.  UPDATE: Want to be able to support executable filespecs without requiring them
-			// to be enclosed in double quotes.  Therefore, search the entire string, rather than just first_phrase, for
-			// the left-most occurrence of a valid executable extension.  This should be fine since the user can still
-			// pass in EXEs and such as params as long as the first executable is fully qualified with its real extension
-			// so that we can tell that it's the action and not one of the params.  UPDATE: Since any file type may
-			// potentially accept parameters (.lnk or .ahk files for instance), the first space-terminated substring which
-			// is either an existing file or ends in one of .exe,.bat,.com,.cmd,.hta is considered the executable and the
-			// rest is considered the param.  Remaining shortcomings of this method include:
-			//   -  It doesn't handle an extensionless executable such as "notepad test.txt"
-			//   -  It doesn't handle custom file types (scripts etc.) which don't exist in the working directory but can
-			//      still be executed due to %PATH% and %PATHEXT% even when our caller doesn't supply an absolute path.
-			// These limitations seem acceptable since the caller can allow even those cases to work by simply wrapping
-			// the action in quote marks.
+// Rather than just consider the first phrase to be the executable and the rest to be the param, we check it
+// for a proper extension so that the user can launch a document name containing spaces, without having to
+// enclose it in double quotes.  UPDATE: Want to be able to support executable filespecs without requiring them
+// to be enclosed in double quotes.  Therefore, search the entire string, rather than just first_phrase, for
+// the left-most occurrence of a valid executable extension.  This should be fine since the user can still
+// pass in EXEs and such as params as long as the first executable is fully qualified with its real extension
+// so that we can tell that it's the action and not one of the params.  UPDATE: Since any file type may
+// potentially accept parameters (.lnk or .ahk files for instance), the first space-terminated substring which
+// is either an existing file or ends in one of .exe,.bat,.com,.cmd,.hta is considered the executable and the
+// rest is considered the param.  Remaining shortcomings of this method include:
+//   -  It doesn't handle an extensionless executable such as "notepad test.txt"
+//   -  It doesn't handle custom file types (scripts etc.) which don't exist in the working directory but can
+//      still be executed due to %PATH% and %PATHEXT% even when our caller doesn't supply an absolute path.
+// These limitations seem acceptable since the caller can allow even those cases to work by simply wrapping
+// the action in quote marks.
 			// Make a copy so that we can modify it (i.e. split it into action & params).
 			// Using talloca ensures it will stick around until the function exits:
 			LPTSTR parse_buf = talloca(action_length + 1);
@@ -17162,19 +16598,19 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 					// Find the beginning of the substring or file extension; if \ is encountered, this might be
 					// an extensionless filename, but it probably wouldn't be meaningful to pass params to such a
 					// file since it can't be associated with anything, so skip to the next space in that case.
-					for (action_extension = action_end - 1;
-						action_extension > parse_buf && !_tcschr(_T("\\/."), *action_extension);
-						--action_extension);
+					for ( action_extension = action_end - 1;
+						  action_extension > parse_buf && !_tcschr(_T("\\/."), *action_extension);
+						  --action_extension );
 					if (*action_extension == '.') // Potential file extension; even if action_extension == parse_buf since ".ext" on its own is a valid filename.
 					{
 						*action_end = '\0'; // Temporarily terminate.
-											// If action_extension is a common executable extension, don't call GetFileAttributes() since
-											// the file might actually be in a location listed in %PATH% or the App Paths registry key:
-						if ((action_end - action_extension == 4 && tcscasestr(_T(".exe.bat.com.cmd.hta"), action_extension))
-							// Otherwise the file might still be something capable of accepting params, like a script,
-							// so check if what we have is the name of an existing file:
-							|| !(GetFileAttributes(parse_buf) & FILE_ATTRIBUTE_DIRECTORY)) // i.e. THE FILE EXISTS and is not a directory. This works because (INVALID_FILE_ATTRIBUTES & FILE_ATTRIBUTE_DIRECTORY) is non-zero.
-						{
+						// If action_extension is a common executable extension, don't call GetFileAttributes() since
+						// the file might actually be in a location listed in %PATH% or the App Paths registry key:
+						if ( (action_end-action_extension == 4 && tcscasestr(_T(".exe.bat.com.cmd.hta"), action_extension))
+						// Otherwise the file might still be something capable of accepting params, like a script,
+						// so check if what we have is the name of an existing file:
+							|| !(GetFileAttributes(parse_buf) & FILE_ATTRIBUTE_DIRECTORY) ) // i.e. THE FILE EXISTS and is not a directory. This works because (INVALID_FILE_ATTRIBUTES & FILE_ATTRIBUTE_DIRECTORY) is non-zero.
+						{	
 							shell_action = parse_buf;
 							shell_params = action_end + 1;
 							break;
@@ -17194,15 +16630,15 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 		//sei.lpVerb = NULL;
 		sei.lpFile = shell_action;
 		sei.lpParameters = shell_params; // NULL if no parameters were present.
-										 // Above was fixed v1.0.42.06 to be NULL rather than the empty string to prevent passing an
-										 // extra space at the end of a parameter list (this might happen only when launching a shortcut
-										 // [.lnk file]).  MSDN states: "If the lpFile member specifies a document file, lpParameters should
-										 // be NULL."  This implies that NULL is a suitable value for lpParameters in cases where you don't
-										 // want to pass any parameters at all.
-
+		// Above was fixed v1.0.42.06 to be NULL rather than the empty string to prevent passing an
+		// extra space at the end of a parameter list (this might happen only when launching a shortcut
+		// [.lnk file]).  MSDN states: "If the lpFile member specifies a document file, lpParameters should
+		// be NULL."  This implies that NULL is a suitable value for lpParameters in cases where you don't
+		// want to pass any parameters at all.
+		
 		if (ShellExecuteEx(&sei)) // Relies on short-circuit boolean order.
 		{
-			typedef DWORD(WINAPI *GetProcessIDType)(HANDLE);
+			typedef DWORD (WINAPI *GetProcessIDType)(HANDLE);
 			// GetProcessID is only available on WinXP SP1 or later, so load it dynamically.
 			static GetProcessIDType fnGetProcessID = (GetProcessIDType)GetProcAddress(GetModuleHandle(_T("kernel32.dll")), "GetProcessId");
 
@@ -17235,8 +16671,8 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 				*verb_text = '\0';
 			if (!shell_params)
 				shell_params = _T(""); // Expected to be non-NULL below.
-									   // Use format specifier to make sure it doesn't get too big for the error
-									   // function to display:
+			// Use format specifier to make sure it doesn't get too big for the error
+			// function to display:
 			sntprintf(error_text, _countof(error_text)
 				, _T("%s\nAction: <%-0.400s%s>")
 				_T("%s")
@@ -17245,7 +16681,7 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 				, shell_action, _tcslen(shell_action) > 400 ? _T("...") : _T("")
 				, verb_text
 				, shell_params, _tcslen(shell_params) > 400 ? _T("...") : _T("")
-			);
+				);
 			ScriptError(error_text, system_error_text);
 		}
 		return FAIL;
@@ -17255,9 +16691,9 @@ ResultType Script::ActionExec(LPTSTR aAction, LPTSTR aParams, LPTSTR aWorkingDir
 	if (aUpdateLastError)
 		g->LastError = 0; // Force zero to indicate success, which seems more maintainable and reliable than calling GetLastError() right here.
 
-						  // If aProcess isn't NULL, the caller wanted the process handle left open and so it must eventually call
-						  // CloseHandle().  Otherwise, we should close the process if it's non-NULL (it can be NULL in the case of
-						  // launching things like "find D:\" or "www.yahoo.com").
+	// If aProcess isn't NULL, the caller wanted the process handle left open and so it must eventually call
+	// CloseHandle().  Otherwise, we should close the process if it's non-NULL (it can be NULL in the case of
+	// launching things like "find D:\" or "www.yahoo.com").
 	if (!aProcess && hprocess)
 		CloseHandle(hprocess); // Required to avoid memory leak.
 	return OK;
